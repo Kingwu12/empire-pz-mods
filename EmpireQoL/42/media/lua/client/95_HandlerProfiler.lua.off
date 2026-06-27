@@ -1,0 +1,49 @@
+-- 95_HandlerProfiler.lua  (v3 - DEFERRED install, build-menu focus)
+-- Installs on the FIRST OnTick, after every mod's file-load AND OnGameStart
+-- registration is done -- that's when Event.Remove reliably finds the original,
+-- so the Remove+Add wrap does NOT leave a duplicate.
+-- Targets the build-menu handlers (prime suspects for the 200-400ms cost).
+
+local EV = Events.OnFillWorldObjectContextMenu
+local THRESH = 1
+local done = false
+
+local function timed(name, fn)
+    return function(...)
+        local t0 = getTimestampMs()
+        fn(...)
+        local dt = getTimestampMs() - t0
+        if EMPIRE_DEBUG_ON ~= false and dt >= THRESH then
+            print("[EMPIRE-DEBUG]   H " .. name .. ": " .. dt .. "ms")
+        end
+    end
+end
+
+local function wrapEvent(name, tbl, key)
+    if type(tbl) ~= "table" or type(tbl[key]) ~= "function" then return end
+    local fn = tbl[key]
+    EV.Remove(fn)
+    EV.Add(timed(name, fn))
+    print("[EMPIRE-DEBUG] prof wrapped " .. name)
+end
+
+local function install()
+    if done then return end
+    done = true
+    Events.OnTick.Remove(install)
+
+    wrapEvent("ISBuildMenu",     ISBuildMenu,        "doBuildMenu")
+    wrapEvent("ISInventoryMenu", ISInventoryMenu,    "doBuildMenu")
+    wrapEvent("ISMetalWelding",  ISMetalWeldingMenu, "doBuildMenu")
+    wrapEvent("ISBlacksmith",    ISBlacksmithMenu,   "doBuildMenu")
+    wrapEvent("MoreBuild",       MoreBuild,          "OnFillWorldObjectContextMenu")
+    wrapEvent("HydrocraftBuild", HydrocraftBuild,    "doBuildMenu")
+    wrapEvent("PFGMenu",         PFGMenu,            "addWorldContext")
+    wrapEvent("P4HasBeenRead",   P4HasBeenRead,      "OnFillWorldObjectContextMenu")
+    wrapEvent("AutoLoot",        AutoLoot,           "createLootFilterMenu")
+    wrapEvent("ISLight",         ISLightContextMenu, "doMenu")
+
+    print("[EMPIRE-DEBUG] 95 profiler v3 installed (deferred). Right-click to measure.")
+end
+
+Events.OnTick.Add(install)

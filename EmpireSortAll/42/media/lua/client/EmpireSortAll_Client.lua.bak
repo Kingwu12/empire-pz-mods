@@ -1,0 +1,1187 @@
+-- ============================================================
+-- Empire Smart Sort v3  (type affinity + tags + respect-existing)
+-- F9 / right-click inventory -> "Smart Sort Base".
+-- Right-click any storage in the world -> "Empire Storage" to LOCK it to a
+-- category (e.g. the gun cabinet = Guns & Ammo). The lock persists in your save.
+--
+-- How it decides, per container:
+--   * Cold storage (fridge/freezer)  -> holds ONLY perishable food. Anything else
+--     gets evicted to its proper home. No more electronics in the freezer.
+--   * Tagged container               -> holds ONLY its tagged categories. The gun
+--     cabinet keeps guns/ammo; nothing else creeps in, nothing gets pulled out.
+--   * A few distinctive furniture types auto-claim a category (wardrobe = clothes)
+--     so you needn't tag the obvious ones.
+--   * EVERY other container (plain crates/shelves) is left exactly as you arranged
+--     it -- the sort never shuffles your organised storage around.
+-- Loose loot in your inventory + worn bags is filed into the right homes.
+-- ============================================================
+
+local RADIUS = 12
+local EMPIRE_SORT_DEBUG = false  -- prints a one-line breakdown to console on each F9
+
+-- ---- item categorisation ----
+local DRY_FOOD = {
+    TinnedBeans=true, TinnedSardines=true, TinnedCorn=true, TinnedPeas=true,
+    CannedCorn=true, CannedPeas=true, CannedTomato=true, CannedBolognese=true,
+    CannedChili=true, CannedCarrots=true, CannedMushroomSoup=true,
+    TinnedSoup=true, CornedBeef=true, TunaTin=true, Dogfood=true,
+    Rice=true, RiceUncooked=true, Pasta=true, PastaUncooked=true,
+    Crackers=true, Chips=true, Crisps=true, Sugar=true, Flour=true,
+    Cereal=true, Coffee=true, Honey=true, Salt=true, Pop=true,
+    CandyPackage=true, BeefJerky=true, Twiggies=true,
+}
+
+-- The game tags every item with a DisplayCategory (its own in-game label). We read
+-- that and fold the 50-odd game labels into clean storage buckets. Anything we don't
+-- explicitly map keeps its raw game label as its own bucket -- so nothing lands in a
+-- generic pile, and MODDED items auto-sort by whatever label their mod gave them.
+local CAT_MAP = {
+    -- ===== FOOD (mapped to "Food" -> split into Perishable / DryFood below by spoilage) =====
+    Food="Food",
+    FoodP="Food", FoodB="Food", FoodN="Food", FoodS="Food", FoodC="Food", -- Hydrocraft food families
+    AnimalDead="Food",                              -- HC carcasses / butchered meat -> fridge
+    -- ===== DRINK =====
+    Water="Water", WaterContainer="Water",
+    -- ===== COOKING =====
+    Cooking="Cooking", CookRef="Cooking",
+    -- ===== COMBAT =====
+    Weapon="Weapon", WeaponCrafted="Weapon", WepMelee="Weapon", WepShield="Weapon", WepBow="Weapon",
+    WepRange="Gun", WepFire="Gun",
+    WeaponPart="GunParts", WepPart="GunParts",
+    Ammo="Ammo", WepAmmoMag="Ammo",
+    Explosives="Explosives", WepBomb="Explosives",
+    -- ===== MEDICAL (incl. HC drugs/pills, which are Type=Food but belong with meds) =====
+    FirstAid="Medical", Bandage="Medical", Medical="Medical", Drugs="Medical",
+    -- ===== TOOLS / TECH / VEHICLE =====
+    Tool="Tools", ToolWeapon="Tools",
+    VehicleMaintenance="VehicleParts",
+    Electronics="Electronics", Communications="Electronics", CraftElec="Electronics", -- HC CraftElec = electronics
+    LightSource="Light",
+    -- ===== OUTDOORS / SURVIVAL (HC Sur* family + manure -> gardening) =====
+    Gardening="Gardening", SurFarm="Gardening", SurFor="Gardening", SurApi="Gardening", AnimalPoop="Gardening",
+    Fishing="Fishing", SurFish="Fishing", SurBug="Fishing",
+    Trapping="Trapping", SurTrap="Trapping", SurHunt="Trapping",
+    Camping="Camping", SurCamp="Camping",
+    -- ===== MATERIALS / CRAFTING (HC Craft* metalwork/carpentry/masonry/mining/bone/gem/etc.) =====
+    Material="Materials", Paint="Materials", Mineral="Materials", Fuel="Materials", Tile="Materials",
+    Craft="Materials", Crafting="Materials", CraftMet="Materials", CraftMetal="Materials",
+    CraftCarp="Materials", CraftMas="Materials", CraftMine="Materials", CraftBone="Materials",
+    CraftGem="Materials", CraftRec="Materials", CraftRef="Materials", CraftInd="Materials",
+    CraftMisc="Materials", CraftAmmo="Materials", CraftCom="Materials", CraftDist="Materials",
+    -- ===== CHEMICALS (own shelf -- HC CraftChem is 300+ lab/chemistry items) =====
+    CraftChem="Chemicals",
+    -- ===== ANIMALS (live animals, cages, animal misc) =====
+    Animal="Animals", AnimalMisc="Animals", AnimalEnc="Animals",
+    -- ===== BOOKS / READING (HC LitR recipe mags, LitE books) =====
+    Literature="Books", Cartography="Books", LitR="Books", LitE="Books", LitW="Books",
+    SkillBook="SkillBooks",
+    -- ===== ENTERTAINMENT (toys, instruments, sports, fitness) =====
+    Entertainment="Entertainment", Sports="Entertainment", Toy="Entertainment",
+    Instrument="Entertainment", Fitness="Entertainment",
+    -- ===== CLOTHING (HC Cloth* families + appearance/accessories) =====
+    Clothing="Clothing", Accessory="Clothing", Appearance="Clothing", Appear="Clothing",
+    ClothP="Clothing", ClothN="Clothing", ClothM="Clothing",
+    -- ===== CONTAINERS / FURNITURE / HOUSEHOLD =====
+    Bag="Bags", Container="Bags",
+    Furniture="Furniture",
+    Household="Household", Cleaning="Household",
+    -- ===== JUNK / MISC (HC Useless/Trash/Money + vanilla corpse/body labels) =====
+    Misc="Misc", Junk="Misc", Useless="Misc", Trash="Misc", Money="Misc", Item="Misc",
+    Corpse="Misc", MaleBody="Misc", Wound="Misc", ZedDmg="Misc", Hidden="Misc", Security="Misc",
+    Badger="Misc", Beaver="Misc", Bunny="Misc", Fox="Misc", Hedgehog="Misc",
+    Mole="Misc", Raccoon="Misc", Squirrel="Misc",
+}
+
+-- Light tools that carry the "ToolWeapon" label but are NOT melee weapons -- they stay
+-- in the tools bucket instead of clogging the weapon locker. Everything else labelled
+-- ToolWeapon (axe, hand axe, crowbar, etc.) is treated as a melee weapon.
+local LIGHT_TOOLS = {
+    Hammer=true, BallPeenHammer=true, ClubHammer=true, Screwdriver=true,
+    Wrench=true, PipeWrench=true, Saw=true, HandSaw=true, GardenSaw=true,
+}
+
+local function categoryOfRaw(item)
+    local result = "Misc"
+    pcall(function()
+        if not item then return end
+        -- firearms first: a ranged hand weapon is a Gun no matter what label it carries
+        if instanceof(item, "HandWeapon") then
+            local ranged = false
+            pcall(function() ranged = item:isRanged() end)
+            if ranged then result = "Gun"; return end
+            -- Real melee weapon? Two ways to qualify:
+            --   1. it's a DESIGNED weapon (DisplayCategory Weapon/WeaponCrafted) -- machete,
+            --      katana, hunting knife, spears, and most modded (Brita) weapons; or
+            --   2. it actually hits hard (max damage > 1.0) -- catches bats (labelled Sports),
+            --      crowbars, axes, and modded weapons with odd labels.
+            -- Everything weaker (pen 0.1, fork 0.1, rolling pin 0.5, kitchen knife 0.7,
+            -- screwdriver 0.7, hammer 1.0) is NOT treated as a weapon -- it falls through to
+            -- its real category (household/tools/cooking) so junk never clogs the weapon locker.
+            local d = nil
+            pcall(function() d = item:getDisplayCategory() end)
+            if d == "Weapon" or d == "WeaponCrafted" then result = "Weapon"; return end
+            local dmg = 0
+            pcall(function() dmg = item:getMaxDamage() end)
+            if dmg > 1.0 then result = "Weapon"; return end
+            -- ToolWeapon fallback: axes/crowbars/hand-axes carry the "ToolWeapon" label and
+            -- getMaxDamage reads 0 on some items -- so treat ToolWeapon as a melee weapon
+            -- unless it's a light tool (hammer/screwdriver/etc.) we explicitly exclude.
+            if d == "ToolWeapon" then
+                local t = item:getType() or ""
+                if not LIGHT_TOOLS[t] then result = "Weapon"; return end
+            end
+            -- not a real weapon: do NOT return -- fall through to normal mapping below
+        end
+        if instanceof(item, "Ammo") then result = "Ammo"; return end
+        -- gun magazines / clips hold rounds -> file them with ammo. They are NOT
+        -- HandWeapons so they slip past the gun check above; getMaxAmmo > 0 = a magazine.
+        local maxAmmo = 0
+        pcall(function() maxAmmo = item:getMaxAmmo() end)
+        if maxAmmo and maxAmmo > 0 then result = "Ammo"; return end
+
+        -- WEARABLES (armour + clothing). Brita's Armor Pack is 549 clothing pieces + 101
+        -- wearable plate-carrier *containers*, and most carry NO DisplayCategory -- so they
+        -- used to fall through to Misc/Bags and never get sorted. Catch any worn item:
+        -- a Clothing instance, OR anything with a real body location (covers the armour
+        -- vests that are Type=Container but worn). Worn bags/backpacks are excluded -- they
+        -- aren't Clothing instances and report no body location, so they still sort to Bags.
+        do
+            local worn = instanceof(item, "Clothing")
+            if not worn then
+                local bl = nil
+                pcall(function() bl = item:getBodyLocation() end)
+                if bl and bl ~= "" and bl ~= "Bag" then worn = true end
+            end
+            if worn then result = "Clothing"; return end
+        end
+
+        local disp = nil
+        pcall(function() disp = item:getDisplayCategory() end)
+        local mapped = disp and CAT_MAP[disp] or nil
+
+        -- food: split fresh from long-life so fresh routes to the fridge/freezer
+        if mapped == "Food" or (not mapped and instanceof(item, "Food")) then
+            local t = item:getType() or ""
+            if DRY_FOOD[t] then result = "DryFood"; return end
+            local off = 0
+            pcall(function() off = item:getOffAgeMax() or 0 end)
+            if off > 200000 then result = "DryFood" else result = "Perishable" end
+            return
+        end
+
+        if mapped then result = mapped; return end
+        -- unmapped (incl. modded) labels become their own bucket, named by the game
+        if disp and disp ~= "" then result = disp; return end
+        -- last resort: the item's broad type category
+        local cat = item:getCategory() or "Misc"
+        if cat == "Weapon" then result = "Weapon"
+        elseif cat == "Ammo" then result = "Ammo"
+        elseif cat == "Literature" then result = "Books"
+        elseif cat == "Container" then result = "Bags"
+        else result = "Misc" end
+    end)
+    return result
+end
+
+-- Per-F9-run memo cache. The same item gets classified several times in one sort
+-- (countByCat, home-cat build, eviction, magnets, apply, DIAG). categoryOfRaw makes
+-- ~8 engine calls each, so on a Hydrocraft base (thousands of items x several passes)
+-- that classifier dominates F9 time. Caching by item identity collapses it to ONE
+-- classification per item per sort. smartSort resets this table at the start of each run.
+local _catCache = {}
+local function categoryOf(item)
+    if item == nil then return "Misc" end
+    local c = _catCache[item]
+    if c ~= nil then return c end
+    c = categoryOfRaw(item)
+    _catCache[item] = c
+    return c
+end
+
+-- Items we must NEVER auto-move: anything you've favourited (the star) or equipped.
+-- A favourite getting yanked into a bin is unacceptable, so this guards every move loop.
+local function isProtected(it)
+    local p = false
+    pcall(function() p = it:isFavorite() end)
+    if p then return true end
+    pcall(function() p = it:isEquipped() end)
+    return p
+end
+
+-- ---- container helpers ----
+local function containerType(cont)
+    local ctype = ""
+    pcall(function() ctype = cont:getType() or "" end)
+    return ctype
+end
+local function isFreezer(ct)
+    ct = (ct or ""):lower()
+    return ct == "freezer" or ct == "icecream" or ct:find("freezer", 1, true) ~= nil
+end
+local function isFridge(ct)
+    ct = (ct or ""):lower()
+    return ct == "fridge" or ct:find("fridge", 1, true) ~= nil
+end
+
+-- Distinctive furniture that auto-claims a category. Kept deliberately small --
+-- generic crates/shelves/lockers are NOT here, because you have many of them and
+-- they have no single meaning. You tag those.
+local TYPE_AFFINITY = {
+    wardrobe="Clothing", clothingrack="Clothing", dresser="Clothing",
+    medicine="Medical",
+}
+local function affinityOf(ct)
+    ct = (ct or ""):lower()
+    if ct == "" then return nil end
+    if TYPE_AFFINITY[ct] then return TYPE_AFFINITY[ct] end
+    for key, cat in pairs(TYPE_AFFINITY) do
+        if ct:find(key, 1, true) then return cat end
+    end
+    return nil
+end
+
+-- ---- tags (persisted on the furniture object's ModData, survives save/load) ----
+local VALID = {
+    Perishable=true, DryFood=true, Water=true, Cooking=true, Compost=true,
+    Gun=true, Weapon=true, Ammo=true, GunParts=true, Explosives=true,
+    Medical=true, Tools=true, VehicleParts=true, Materials=true, Chemicals=true, Electronics=true,
+    Light=true, Gardening=true, Fishing=true, Trapping=true, Camping=true, Animals=true,
+    Books=true, SkillBooks=true, Entertainment=true,
+    Clothing=true, Bags=true, Furniture=true, Household=true, Misc=true,
+}
+
+-- Tags live in ONE persisted global table keyed by the container's WORLD POSITION
+-- (+ its type), NOT on the furniture object's ModData. This is the RV/vehicle fix:
+-- the object you right-click and the object the F9 scan finds can be different Lua
+-- instances that do NOT share ModData, so a lock set via the menu was invisible to the
+-- sorter ("nothing to move"). A position key resolves identically from both paths.
+local function tagTable()
+    local t = nil
+    pcall(function() t = ModData.getOrCreate("EmpireStorageTags") end)
+    return t or {}
+end
+local function containerKey(c)
+    if not c then return nil end
+    local sq = nil
+    pcall(function() local pa = c:getParent(); if pa then sq = pa:getSquare() end end)
+    if not sq then pcall(function() sq = c:getSquare() end) end
+    if not sq then return nil end
+    local x, y, z = 0, 0, 0
+    pcall(function() x = sq:getX(); y = sq:getY(); z = sq:getZ() end)
+    local ct = ""; pcall(function() ct = c:getType() or "" end)
+    return x .. "|" .. y .. "|" .. z .. "|" .. ct
+end
+local function readTagSet(c)
+    local key = containerKey(c)
+    if not key then return nil end
+    local raw = tagTable()[key]
+    if not raw or raw == "" then return nil end
+    local set, any = {}, false
+    for part in tostring(raw):gmatch("[^,]+") do
+        part = part:gsub("%s+", "")
+        if VALID[part] then set[part] = true; any = true end
+    end
+    if not any then return nil end
+    return set
+end
+local function writeTag(c, str)
+    local key = containerKey(c)
+    if not key then return end
+    local t = tagTable()
+    if str == nil or str == "" then t[key] = nil else t[key] = str end
+end
+
+-- ---- gather every storage within radius, on every floor ----
+-- Returns list of { c=container, obj=ownerObject, ctype=string, tag=set|nil }.
+local function collectStorages(player)
+    local out, seen = {}, {}
+    local sq = player:getCurrentSquare()
+    if not sq then return out end
+    local cell = getCell()
+    -- SCAN AREA: the WHOLE defined base when you're standing in one (Fallout-style
+    -- shared pool); otherwise a radius box around you (the old behaviour). Base sweep
+    -- still runs on the floor you're on -- stand on each level and F9 for multi-floor.
+    local bx1, bx2, by1, by2, bz1, bz2
+    if EmpireBases and EmpireBases.scanBounds then
+        bx1, bx2, by1, by2, bz1, bz2 = EmpireBases.scanBounds(player, RADIUS)
+    end
+    if not bx1 then
+        local px, py = sq:getX(), sq:getY()
+        bx1, bx2, by1, by2, bz1, bz2 = px - RADIUS, px + RADIUS, py - RADIUS, py + RADIUS, sq:getZ(), sq:getZ()
+    end
+    for z = bz1, bz2 do
+        for x = bx1, bx2 do
+            for y = by1, by2 do
+                local s = cell:getGridSquare(x, y, z)
+                if s then
+                    local objs = s:getObjects()
+                    for i = 0, objs:size() - 1 do
+                        local obj = objs:get(i)
+                        local c = nil
+                        pcall(function() c = obj:getContainer() end)
+                        if c and not seen[c] then
+                            seen[c] = true
+                            -- HARD SKIP functional containers (ISA solar power box, etc.):
+                            -- never scanned, never evicted, never magneted out of -- so F9
+                            -- can never yank a working battery out of the power box.
+                            if not (EmpireSortConfig and EmpireSortConfig.isExcludedContainer
+                                    and EmpireSortConfig.isExcludedContainer(c)) then
+                                local holder = obj
+                                pcall(function() local pa = c:getParent(); if pa then holder = pa end end)
+                                out[#out+1] = {
+                                    c = c, obj = holder, ctype = containerType(c),
+                                    tag = readTagSet(c),
+                                }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- rotten food test (used to PURGE rot to the floor and to SKIP rot during floor pickup)
+local function isRottenItem(it)
+    -- isRotten() exists ONLY on Food items. Calling it on a tool/weapon/material is a
+    -- nil-method call -- pcall catches it for control flow, but PZ's VM still logs the
+    -- exception, flooding the console with one trace per non-food item. Guard with an
+    -- instanceof Food check first (same pattern AutoFeed uses) so it's never called blind.
+    local food = false
+    pcall(function() food = instanceof(it, "Food") end)
+    if not food then return false end
+    local r = false
+    pcall(function() r = it:isRotten() end)
+    return r
+end
+
+-- Tell "loot I dumped to sort" apart from "stuff I PLACED on purpose". Floor pickup must
+-- NEVER grab the second kind: your ammo furnace, generators, decorations, placed furniture.
+-- Guard 1: Moveable item-form (all furniture/decor you set down). Guard 2: a denylist of
+-- functional deployables by type. Favourite anything else you want permanently left alone.
+local PLACED_KEEP_KEYS = {
+    "furnace","smelt","foundr","forge","anvil","kiln","crucible","bellows","grindstone",
+    "generator","campfire","compost","rainco","still","brew","loom","spinningwheel",
+    "beehive","trough","workbench","smithy","cauldron",
+}
+-- Functional crafting STATIONS that are item-form containers, NOT Moveables, and whose
+-- type name carries none of the keywords above -- so the keyword/Moveable guards miss them
+-- and F9 "packs them up" off the floor. The Lee Load-Master / Lyman reloading presses are
+-- exactly this: Type=Container, DisplayCategory=ReloadingTool. Keep by DisplayCategory so
+-- ANY reloading bench from ANY mod is left where you placed it, with exact types as backup.
+local PLACED_KEEP_CATS  = { ReloadingTool = true }
+local PLACED_KEEP_TYPES = { lee_loadmaster = true, lyman_tmag = true }
+local function isPlacedKeepItem(it)
+    if not it then return false end
+    local mv = false
+    pcall(function() mv = instanceof(it, "Moveable") end)
+    if mv then return true end
+    local disp = nil
+    pcall(function() disp = it:getDisplayCategory() end)
+    if disp and PLACED_KEEP_CATS[disp] then return true end
+    local t = ""
+    pcall(function() t = (it:getType() or ""):lower() end)
+    if t ~= "" then
+        if PLACED_KEEP_TYPES[t] then return true end
+        for _, k in ipairs(PLACED_KEEP_KEYS) do
+            if t:find(k, 1, true) then return true end
+        end
+    end
+    return false
+end
+
+-- ---- gather loose items lying on the FLOOR within radius, every floor ----
+-- You dump loot on the ground for "sort later", so the sort has to see it. Returns
+-- { wo=IsoWorldInventoryObject, item=InventoryItem, sq=square } for each ground item.
+local function collectFloorItems(player)
+    local out = {}
+    local sq = player:getCurrentSquare()
+    if not sq then return out end
+    local cell = getCell()
+    if not cell then return out end
+    -- SCAN AREA: whole base when standing in one, else radius box (matches collectStorages).
+    local bx1, bx2, by1, by2, bz1, bz2
+    if EmpireBases and EmpireBases.scanBounds then
+        bx1, bx2, by1, by2, bz1, bz2 = EmpireBases.scanBounds(player, RADIUS)
+    end
+    if not bx1 then
+        local px, py = sq:getX(), sq:getY()
+        bx1, bx2, by1, by2, bz1, bz2 = px - RADIUS, px + RADIUS, py - RADIUS, py + RADIUS, sq:getZ(), sq:getZ()
+    end
+    for z = bz1, bz2 do
+        for x = bx1, bx2 do
+            for y = by1, by2 do
+                local s = cell:getGridSquare(x, y, z)
+                if s then
+                    local wos = nil
+                    pcall(function() wos = s:getWorldObjects() end)
+                    if wos then
+                        for i = 0, wos:size() - 1 do
+                            local wo = wos:get(i)
+                            local it = nil
+                            pcall(function() it = wo:getItem() end)
+                            if it and not isPlacedKeepItem(it) then out[#out+1] = { wo = wo, item = it, sq = s } end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- count items per category currently in a container
+local function countByCat(cont)
+    local counts = {}
+    local items = cont:getItems()
+    for i = 0, items:size() - 1 do
+        local k = categoryOf(items:get(i))
+        counts[k] = (counts[k] or 0) + 1
+    end
+    return counts
+end
+
+local function smartSort(player)
+    if not player then player = getSpecificPlayer(0) end
+    if not player then return end
+
+    _catCache = {}   -- fresh category cache for this sort run (perf: classify each item once)
+    local stores = collectStorages(player)
+    if #stores == 0 then
+        HaloTextHelper.addText(player, "No storage nearby to sort", HaloTextHelper.getColorRed())
+        player:Say("No storage close enough to sort.")
+        return
+    end
+
+    -- Fallout-style base pool: when you're standing in a defined base, F9 swept the
+    -- WHOLE base (collectStorages handled the area). Surface which base so it's visible.
+    local _activeBase = (EmpireBases and EmpireBases.activeBase and EmpireBases.activeBase(player)) or nil
+    if _activeBase then
+        HaloTextHelper.addText(player, "BASE SORT: " .. (_activeBase.name or "Main") .. " (" .. #stores .. " containers)", HaloTextHelper.getColorGreen())
+    end
+
+    -- Classify each store + decide its strict home categories.
+    --   designated = true means it evicts anything outside homeCats.
+    --   general containers (designated=false) keep whatever they already hold.
+    for _, st in ipairs(stores) do
+        if st.tag then
+            st.designated, st.homeCats = true, st.tag
+        elseif isFreezer(st.ctype) or isFridge(st.ctype) then
+            st.designated, st.homeCats = true, { Perishable = true }
+            st.cold = true
+        else
+            local aff = affinityOf(st.ctype)
+            if aff then
+                st.designated, st.homeCats = true, { [aff] = true }
+            else
+                st.designated = false
+                local hc = {}
+                for cat in pairs(countByCat(st.c)) do hc[cat] = true end
+                st.homeCats = hc           -- respect existing arrangement
+            end
+        end
+    end
+
+    -- which containers are cold (food appliances) -- used so we only warn about
+    -- non-food that's genuinely trapped in a fridge/freezer with no shelf to take it.
+    local coldConts = {}
+    for _, st in ipairs(stores) do if st.cold then coldConts[st.c] = true end end
+
+    -- Build destFor[cat] = the single best container to FILE a loose/evicted item of
+    -- that category into. destsFor[cat] keeps the FULL ordered fallback list so a full
+    -- primary container spills over to the next valid one instead of "nowhere to go".
+    -- Priority: tagged > affinity/cold > general-holding-most > any general.
+    local destFor = {}
+    local destsFor = {}
+    local function offer(cat, cont)
+        if not cat or not cont then return end
+        if not destFor[cat] then destFor[cat] = cont end
+        local lst = destsFor[cat]; if not lst then lst = {}; destsFor[cat] = lst end
+        for _, c in ipairs(lst) do if c == cont then return end end
+        lst[#lst+1] = cont
+    end
+
+    for _, st in ipairs(stores) do        -- tagged first
+        if st.tag then for cat in pairs(st.tag) do offer(cat, st.c) end end
+    end
+    for _, st in ipairs(stores) do        -- cold + affinity
+        if st.designated and not st.tag then
+            for cat in pairs(st.homeCats) do offer(cat, st.c) end
+        end
+    end
+    -- general containers: give each category to the general container already holding
+    -- the most of it (extends your existing organisation instead of fighting it).
+    local mostOf = {}                      -- cat -> {cont=, n=}
+    local generals = {}
+    for _, st in ipairs(stores) do
+        if not st.designated then
+            generals[#generals+1] = st.c
+            for cat, n in pairs(countByCat(st.c)) do
+                if not mostOf[cat] or n > mostOf[cat].n then mostOf[cat] = { cont = st.c, n = n } end
+            end
+        end
+    end
+    for cat, rec in pairs(mostOf) do offer(cat, rec.cont) end
+    -- round-robin any general container to categories still without a destination
+    if #generals > 0 then
+        local CATS = {
+            "Perishable","DryFood","Water","Cooking","Gun","Weapon","Ammo","GunParts",
+            "Explosives","Medical","Tools","VehicleParts","Materials","Chemicals","Electronics",
+            "Light","Gardening","Fishing","Trapping","Camping","Animals","Books","SkillBooks",
+            "Entertainment","Clothing","Bags","Furniture","Household","Misc",
+        }
+        local gi = 0
+        for _, cat in ipairs(CATS) do
+            if not destFor[cat] then offer(cat, generals[(gi % #generals) + 1]); gi = gi + 1 end
+        end
+    end
+
+    -- UNIVERSAL HOME: guarantee EVERY category that shows up gets a general-box home,
+    -- even odd/modded buckets and Misc (money/coins) not in the fixed list above. This is
+    -- what stops "a pile of stuff that never gets sorted" -- if you own ANY unlabelled box,
+    -- anything homeless flows into one (round-robin) instead of being left behind.
+    local _rrIdx = 0
+    local function homeFor(cat)
+        if destFor[cat] then return destFor[cat] end
+        if #generals > 0 then
+            _rrIdx = _rrIdx + 1
+            local c = generals[((_rrIdx - 1) % #generals) + 1]
+            offer(cat, c)
+            return c
+        end
+        return nil
+    end
+
+    -- ---- plan moves ----
+    local moves = {}
+
+    -- (1) containers: only DESIGNATED ones evict mis-filed items; generals are left alone.
+    for _, st in ipairs(stores) do
+        if st.designated then
+            local items = st.c:getItems()
+            local snap = {}
+            for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
+            for _, it in ipairs(snap) do
+                if not isProtected(it) then
+                    local cat = categoryOf(it)
+                    if not st.homeCats[cat] then
+                        local dest = homeFor(cat)
+                        -- fridges/freezers must end up food-only. If a misfiled item has no
+                        -- home shelf nearby (e.g. inside the RV), pull it into your inventory
+                        -- so it still leaves the cold instead of being stuck there.
+                        if (not dest) and st.cold then dest = player:getInventory() end
+                        if dest and dest ~= st.c then moves[#moves+1] = { item = it, from = st.c, to = dest } end
+                    end
+                end
+            end
+        end
+    end
+
+    -- (1b) MAGNET: anything whose category you've TAGGED a container for gets pulled
+    -- into that container from ANYWHERE nearby -- untagged shelves included. This is what
+    -- makes "tag the cabinet Guns & Ammo, hit F9" actually gather every gun into it.
+    -- Untagged categories are still left where they are (respect-existing); only the
+    -- types you explicitly locked act as magnets, so nothing else gets shuffled.
+    local taggedDest = {}      -- cat -> first tagged container (planning)
+    local taggedDests = {}     -- cat -> ALL tagged containers for that cat (apply spillover, tagged-only)
+    for _, st in ipairs(stores) do
+        if st.tag then
+            for cat in pairs(st.tag) do
+                if not taggedDest[cat] then taggedDest[cat] = st.c end
+                local l = taggedDests[cat]; if not l then l = {}; taggedDests[cat] = l end
+                l[#l+1] = st.c
+            end
+        end
+    end
+    for _, st in ipairs(stores) do
+        local items = st.c:getItems()
+        local snap = {}
+        for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
+        for _, it in ipairs(snap) do
+            if not isProtected(it) and not isRottenItem(it) then
+                -- NOTE: rotten food is owned entirely by PASS A (compost routing), so it is
+                -- never magnet-pulled here -- otherwise it'd get yanked out of the compost
+                -- bin toward a Perishable/fridge home on the next sort.
+                local cat = categoryOf(it)
+                local dest = taggedDest[cat]
+                -- magnet=true: belongs in a TAGGED container ONLY. If all tagged homes
+                -- for it are full, it STAYS put (never shuffled to a random shelf) and is
+                -- reported as "couldn't fit" so you know to tag a bigger container.
+                if dest and dest ~= st.c then moves[#moves+1] = { item = it, from = st.c, to = dest, magnet = true } end
+            end
+        end
+    end
+
+    -- (2) loose loot the player is carrying (inventory + worn bags) -> homes.
+    local carried, seenC = {}, {}
+    local function addCarried(cont, depth)
+        if not cont or seenC[cont] or depth > 4 then return end
+        seenC[cont] = true
+        carried[#carried+1] = cont
+        local items = nil
+        pcall(function() items = cont:getItems() end)
+        if not items then return end
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            local sub = nil
+            if instanceof(it, "InventoryContainer") then
+                pcall(function() sub = it:getInventory() end)
+            end
+            if sub and sub ~= cont then addCarried(sub, depth + 1) end
+        end
+    end
+    pcall(function() addCarried(player:getInventory(), 0) end)
+
+    for _, cont in ipairs(carried) do
+        local items = nil
+        pcall(function() items = cont:getItems() end)
+        if items then
+            local snap = {}
+            for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
+            for _, it in ipairs(snap) do
+                local isBag = instanceof(it, "InventoryContainer")
+                if not isProtected(it) and not isBag then
+                    local cat = categoryOf(it)
+                    local dest = homeFor(cat)
+                    if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest } end
+                end
+            end
+        end
+    end
+
+    -- ---- apply moves: primary dest, then fall back to other containers of the same
+    -- category. If nothing has room, the item is LEFT where it is (it was already in a
+    -- valid spot) instead of reporting a fake "nowhere to go". Only non-food still
+    -- trapped in a fridge/freezer is reported, because that genuinely needs a shelf.
+    local moved, touched, byCat = 0, {}, {}
+    local stuckCold, blocked, noRoom = 0, 0, 0
+    -- move `item` out of `fromCont` into the first of `candidates` that has room
+    local function placeInto(item, fromCont, candidates)
+        if not candidates then return false end
+        -- never relocate items flagged NEVER_MOVE (wheeled carts, deployables, etc.)
+        if EmpireSortConfig and EmpireSortConfig.isNeverMove and EmpireSortConfig.isNeverMove(item) then return false end
+        for _, dest in ipairs(candidates) do
+            if dest ~= fromCont then
+                local fits = false
+                pcall(function() fits = dest:isItemAllowed(item) and dest:hasRoomFor(player, item) end)
+                if fits then
+                    local ok = pcall(function() dest:addItem(item); fromCont:Remove(item) end)
+                    if ok then touched[dest] = true; touched[fromCont] = true; return true end
+                end
+            end
+        end
+        return false
+    end
+    for _, mv in ipairs(moves) do
+        local stillThere = false
+        pcall(function() stillThere = mv.from:contains(mv.item) end)
+        if stillThere then
+            local cat = categoryOf(mv.item)
+            if mv.magnet then
+                -- tag-pull: ONLY into a tagged container for this category. All full -> stay put.
+                if placeInto(mv.item, mv.from, taggedDests[cat]) then
+                    moved = moved + 1; byCat[cat] = (byCat[cat] or 0) + 1
+                else
+                    blocked = blocked + 1   -- tagged home(s) full; left exactly where it was
+                end
+            else
+                -- eviction / loose loot: file into any home (tagged or general)
+                if placeInto(mv.item, mv.from, destsFor[cat]) then
+                    moved = moved + 1; byCat[cat] = (byCat[cat] or 0) + 1
+                elseif coldConts[mv.from] then
+                    -- non-food trapped in cold -> any free shelf, so the cold goes food-only
+                    if placeInto(mv.item, mv.from, generals) then
+                        moved = moved + 1; byCat[cat] = (byCat[cat] or 0) + 1
+                    else
+                        stuckCold = stuckCold + 1
+                    end
+                else
+                    noRoom = noRoom + 1   -- not cold, every shelf for this category is full
+                end
+            end
+        end
+    end
+    -- ---- PASS A: purge ROTTEN food -> into a Compost-tagged bin, else dropped on floor ----
+    -- Rotten food is never eaten (AutoFeed skips it) and just clogs fridges/crates. Pull
+    -- every rotten item out of every scanned container. If you've tagged a bin "Compost",
+    -- rotten food goes IN there (for composting). Only if there's no compost bin -- or it's
+    -- full -- does it fall back to the floor (old behaviour). Favourites are left alone.
+    local rottenDumped, rottenComposted = 0, 0
+    -- find every compost bin in range up front
+    local compostBins = {}
+    for _, st in ipairs(stores) do
+        if st.tag and st.tag.Compost then compostBins[#compostBins+1] = st end
+    end
+    for _, st in ipairs(stores) do
+        if not (st.tag and st.tag.Compost) then   -- never pull rotten OUT of a compost bin
+            local its = st.c:getItems()
+            local snap = {}
+            for i = 0, its:size() - 1 do snap[#snap+1] = its:get(i) end
+            for _, it in ipairs(snap) do
+                if isRottenItem(it) and not isProtected(it) then
+                    local placed = false
+                    -- 1) try to move it INTO a compost bin that has room
+                    for _, cb in ipairs(compostBins) do
+                        local fits = false
+                        pcall(function() fits = cb.c:hasRoomFor(player, it) end)
+                        if fits then
+                            local ok = pcall(function()
+                                cb.c:addItem(it)
+                                st.c:Remove(it)
+                            end)
+                            if ok then
+                                placed = true
+                                rottenComposted = rottenComposted + 1
+                                touched[st.c] = true; touched[cb.c] = true
+                                break
+                            end
+                        end
+                    end
+                    -- 2) no compost bin (or all full) -> drop on the floor beside the container
+                    if not placed then
+                        local dropSq = nil
+                        pcall(function() dropSq = st.obj:getSquare() end)
+                        if not dropSq then pcall(function() dropSq = player:getCurrentSquare() end) end
+                        if dropSq then
+                            -- canonical drop-from-container order (see Vehicles.lua): add to world, then Remove.
+                            local ok = pcall(function()
+                                dropSq:AddWorldInventoryItem(it, 0, 0, 0)
+                                st.c:Remove(it)
+                            end)
+                            if ok then rottenDumped = rottenDumped + 1; touched[st.c] = true end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- ---- PASS B: file loose loot lying on the FLOOR into its home containers ----
+    -- You dump loot on the ground to "sort later" -- this is the later. Skips rotten (so
+    -- PASS A's pile isn't re-shelved) and favourited/equipped items. Uses the exact detach
+    -- sequence from the game's own ISGrabItemAction so nothing dupes or vanishes.
+    local floorSorted, floorLeft = 0, 0
+    for _, fi in ipairs(collectFloorItems(player)) do
+        local it, wo, sq = fi.item, fi.wo, fi.sq
+        if it and not isProtected(it) and not isRottenItem(it) then
+            local cat = categoryOf(it)
+            homeFor(cat)
+            local cands = destsFor[cat]
+            local placed = false
+            if cands then
+                for _, dest in ipairs(cands) do
+                    local fits = false
+                    pcall(function() fits = dest:isItemAllowed(it) and dest:hasRoomFor(player, it) end)
+                    if fits then
+                        local ok = pcall(function()
+                            sq:transmitRemoveItemFromSquare(wo)
+                            wo:removeFromWorld()
+                            wo:removeFromSquare()
+                            wo:setSquare(nil)
+                            it:setWorldItem(nil)
+                            it:setJobDelta(0.0)
+                            dest:addItem(it)
+                        end)
+                        if ok then
+                            placed = true
+                            floorSorted = floorSorted + 1
+                            byCat[cat] = (byCat[cat] or 0) + 1
+                            touched[dest] = true
+                            break
+                        end
+                    end
+                end
+            end
+            if not placed then floorLeft = floorLeft + 1 end
+        end
+    end
+    moved = moved + floorSorted
+
+    local contN = 0
+    for c in pairs(touched) do contN = contN + 1; pcall(function() c:setDrawDirty(true) end) end
+
+    local LABELS = {
+        Perishable="fridge", DryFood="dry food", Water="water", Cooking="cooking", Compost="compost",
+        Gun="guns", Weapon="melee", Ammo="ammo", GunParts="gun parts",
+        Explosives="explosives", Medical="meds", Tools="tools", VehicleParts="car parts",
+        Materials="materials", Chemicals="chemicals", Electronics="electronics", Light="lights",
+        Gardening="gardening", Fishing="fishing", Trapping="trapping", Camping="camping",
+        Animals="animals", Books="books", SkillBooks="skill books", Entertainment="entertainment",
+        Clothing="clothing", Bags="bags", Furniture="furniture", Household="household",
+        Misc="misc",
+    }
+    local parts = {}
+    for cat, n in pairs(byCat) do parts[#parts+1] = n .. " " .. (LABELS[cat] or cat) end
+    local breakdown = table.concat(parts, ", ")
+
+    -- one-shot visibility: shows what F9 actually saw and did, so we never guess again.
+    if EMPIRE_SORT_DEBUG then
+        local tagged = 0
+        for _, st in ipairs(stores) do if st.tag then tagged = tagged + 1 end end
+        print(string.format("[EmpireSort DIAG] stores=%d tagged=%d planned=%d moved=%d blocked=%d stuckCold=%d rotten=%d composted=%d floorSorted=%d floorLeft=%d",
+            #stores, tagged, #moves, moved, blocked, stuckCold, rottenDumped, rottenComposted, floorSorted, floorLeft))
+        for _, st in ipairs(stores) do
+            local tg = "-"
+            if st.tag then local k = {}; for c in pairs(st.tag) do k[#k+1] = c end; tg = table.concat(k, "+") end
+            local n = 0; pcall(function() n = st.c:getItems():size() end)
+            local w, mx = -1, -1
+            pcall(function() w = st.c:getCapacityWeight() end)
+            pcall(function() mx = st.c:getMaxWeight() end)
+            print(string.format("[EmpireSort DIAG]   ctype=%s tag=%s items=%d weight=%.1f/%.1f", tostring(st.ctype), tg, n, w, mx))
+            -- For a LOCKED/designated container, list items that DON'T belong (foreign), with
+            -- their game label + how we classified them. This is how we see WHY (e.g.) an
+            -- electrical item is stuck in your Gardening crate: either it's labelled wrong by
+            -- its mod (sortedAs=Gardening) or it has no Electronics home to be evicted to.
+            if st.designated and st.homeCats then
+                local its2 = nil; pcall(function() its2 = st.c:getItems() end)
+                local shown = 0
+                if its2 then
+                    for i = 0, its2:size() - 1 do
+                        local it = its2:get(i)
+                        local cat = categoryOf(it)
+                        if not st.homeCats[cat] and shown < 8 then
+                            local nm, dsp = "?", "?"
+                            pcall(function() nm = it:getName() end)
+                            pcall(function() dsp = it:getDisplayCategory() end)
+                            local hasHome = destFor[cat] ~= nil
+                            print(string.format("[EmpireSort DIAG]       FOREIGN: %s | label=%s | sortedAs=%s | hasHomeNearby=%s",
+                                tostring(nm), tostring(dsp), tostring(cat), tostring(hasHome)))
+                            shown = shown + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if rottenComposted > 0 then
+        HaloTextHelper.addText(player, "Composted " .. rottenComposted .. " ROTTEN food", HaloTextHelper.getColorGreen())
+    end
+    if rottenDumped > 0 then
+        HaloTextHelper.addText(player, "Dumped " .. rottenDumped .. " ROTTEN food to floor", HaloTextHelper.getColorRed())
+    end
+    if floorLeft > 0 then
+        HaloTextHelper.addText(player, floorLeft .. " floor items have no shelf yet", HaloTextHelper.getColorWhite())
+    end
+
+    if moved > 0 then
+        HaloTextHelper.addText(player, "SORTED " .. moved .. " items -> " .. contN .. " containers", HaloTextHelper.getColorGreen())
+        if breakdown ~= "" then player:Say("Sorted: " .. breakdown .. ".")
+        else player:Say("Sorted " .. moved .. " items.") end
+        if blocked > 0 then
+            HaloTextHelper.addText(player, blocked .. " couldn't fit - tagged container FULL", HaloTextHelper.getColorRed())
+        end
+        if stuckCold > 0 then
+            HaloTextHelper.addText(player, stuckCold .. " non-food stuck in cold - needs a shelf", HaloTextHelper.getColorRed())
+        end
+    elseif blocked > 0 then
+        HaloTextHelper.addText(player, "Tagged storage FULL - " .. blocked .. " items can't fit", HaloTextHelper.getColorRed())
+        player:Say("Your tagged container's full -- " .. blocked .. " items won't fit. Tag a bigger or 2nd container and F9.")
+    elseif stuckCold > 0 then
+        HaloTextHelper.addText(player, stuckCold .. " non-food stuck in fridge/freezer - tag a shelf for it", HaloTextHelper.getColorRed())
+        player:Say("Non-food's stuck in the cold with no shelf to take it. Tag a crate and F9 again.")
+    elseif rottenDumped > 0 then
+        player:Say("Cleared " .. rottenDumped .. " rotten item(s) out to the floor.")
+    else
+        HaloTextHelper.addText(player, "Nothing to move - already sorted", HaloTextHelper.getColorWhite())
+        player:Say("Storage's already in order.")
+    end
+end
+
+-- ============================================================
+-- CONSOLIDATE DUPLICATES  (F10 / right-click inventory -> "Consolidate Duplicates")
+-- Deliberate, separate pass from F9 Smart Sort. Smart Sort respects how you've
+-- arranged general shelves; this one INTENTIONALLY overrides that for ONE purpose:
+-- gather every instance of the SAME item type into a single container, so you stop
+-- finding the same welding rod spread across five shelves. For each item type it
+-- finds the eligible container ALREADY holding the most of that type (the natural
+-- pile) and pulls the rest toward it, spilling to the next-biggest pile only if the
+-- first fills. Respects cold storage (food only), your tagged locks, favourites/equipped.
+-- ============================================================
+local CONSOLIDATE_MIN_TOTAL = 2   -- ignore types you only own one of -- nothing to merge
+
+local function consolidateTypes(player)
+    if not player then player = getSpecificPlayer(0) end
+    if not player then return end
+
+    _catCache = {}
+    local stores = collectStorages(player)
+    if #stores == 0 then
+        HaloTextHelper.addText(player, "No storage nearby to consolidate", HaloTextHelper.getColorRed())
+        player:Say("No storage close enough.")
+        return
+    end
+
+    -- Same home-rules as Smart Sort so consolidation never fights your locks:
+    --   cold = food only, tagged = its categories only, affinity furniture = its category.
+    for _, st in ipairs(stores) do
+        st.cold = false
+        if st.tag then
+            st.designated, st.homeCats = true, st.tag
+        elseif isFreezer(st.ctype) or isFridge(st.ctype) then
+            st.designated, st.homeCats, st.cold = true, { Perishable = true }, true
+        else
+            local aff = affinityOf(st.ctype)
+            if aff then st.designated, st.homeCats = true, { [aff] = true }
+            else st.designated = false end
+        end
+    end
+
+    -- A container may RECEIVE an item of category `cat` only if it's allowed to hold it.
+    local function eligible(st, cat)
+        if st.cold then return cat == "Perishable" end
+        if st.tag then return st.tag[cat] == true end
+        if st.designated then return st.homeCats and st.homeCats[cat] == true end
+        return true   -- plain general shelf: takes anything
+    end
+
+    local function fullTypeOf(it)
+        local ft = nil
+        pcall(function() ft = it:getFullType() end)
+        if not ft or ft == "" then pcall(function() ft = it:getType() end) end
+        return ft
+    end
+
+    -- Tally: for each item type, how many sit in each store + its category + grand total.
+    local typeData = {}        -- ft -> { cat=, total=, perCont = { [st] = n } }
+    for _, st in ipairs(stores) do
+        local items = st.c:getItems()
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            if not isProtected(it) then
+                local ft = fullTypeOf(it)
+                if ft then
+                    local d = typeData[ft]
+                    if not d then d = { cat = categoryOf(it), total = 0, perCont = {} }; typeData[ft] = d end
+                    d.perCont[st] = (d.perCont[st] or 0) + 1
+                    d.total = d.total + 1
+                end
+            end
+        end
+    end
+
+    -- Pick each type's ANCHOR = the eligible container already holding the most of it.
+    -- (Fall back to any eligible store if every current holder is ineligible -- e.g. a
+    -- non-food item currently trapped only in a fridge.)
+    for ft, d in pairs(typeData) do
+        local best, bestN = nil, -1
+        for st, n in pairs(d.perCont) do
+            if eligible(st, d.cat) and n > bestN then best, bestN = st, n end
+        end
+        if not best then
+            for _, st in ipairs(stores) do
+                if eligible(st, d.cat) then best = st; break end
+            end
+        end
+        d.anchor = best
+    end
+
+    -- move helper: first store in `cands` with room takes it (never back into `fromC`).
+    local moved, touched, typesDone, noRoom = 0, {}, {}, 0
+    local function placeInto(it, fromC, cands)
+        for _, st in ipairs(cands) do
+            local dest = st.c
+            if dest ~= fromC then
+                local fits = false
+                pcall(function() fits = dest:isItemAllowed(it) and dest:hasRoomFor(player, it) end)
+                if fits then
+                    local ok = pcall(function() dest:addItem(it); fromC:Remove(it) end)
+                    if ok then touched[dest] = true; touched[fromC] = true; return true end
+                end
+            end
+        end
+        return false
+    end
+
+    for ft, d in pairs(typeData) do
+        if d.anchor and d.total >= CONSOLIDATE_MIN_TOTAL then
+            -- spill order: anchor first, then the other eligible holders biggest-pile-first
+            local holders = {}
+            for st, n in pairs(d.perCont) do
+                if st ~= d.anchor and eligible(st, d.cat) then holders[#holders+1] = { st = st, n = n } end
+            end
+            table.sort(holders, function(a, b) return a.n > b.n end)
+            local cands = { d.anchor }
+            for _, h in ipairs(holders) do cands[#cands+1] = h.st end
+
+            -- pull every instance that ISN'T already in the anchor toward it
+            local didType = false
+            for st in pairs(d.perCont) do
+                if st ~= d.anchor then
+                    local items = st.c:getItems()
+                    local snap = {}
+                    for i = 0, items:size() - 1 do
+                        local it = items:get(i)
+                        if fullTypeOf(it) == ft and not isProtected(it) then snap[#snap+1] = it end
+                    end
+                    for _, it in ipairs(snap) do
+                        if placeInto(it, st.c, cands) then moved = moved + 1; didType = true
+                        else noRoom = noRoom + 1 end
+                    end
+                end
+            end
+            if didType then typesDone[ft] = true end
+        end
+    end
+
+    local contN = 0
+    for c in pairs(touched) do contN = contN + 1; pcall(function() c:setDrawDirty(true) end) end
+    local typeN = 0; for _ in pairs(typesDone) do typeN = typeN + 1 end
+
+    if EMPIRE_SORT_DEBUG then
+        local seen = 0; for _ in pairs(typeData) do seen = seen + 1 end
+        print(string.format("[EmpireConsolidate DIAG] stores=%d types=%d consolidated=%d itemsMoved=%d noRoom=%d containersTouched=%d",
+            #stores, seen, typeN, moved, noRoom, contN))
+    end
+
+    if moved > 0 then
+        HaloTextHelper.addText(player, "CONSOLIDATED " .. typeN .. " item types (" .. moved .. " moved)", HaloTextHelper.getColorGreen())
+        player:Say("Merged " .. moved .. " duplicates into " .. typeN .. " home piles.")
+        if noRoom > 0 then
+            HaloTextHelper.addText(player, noRoom .. " couldn't fit - home pile FULL", HaloTextHelper.getColorRed())
+        end
+    elseif noRoom > 0 then
+        HaloTextHelper.addText(player, "Home piles FULL - " .. noRoom .. " items couldn't merge", HaloTextHelper.getColorRed())
+        player:Say("No room to merge -- the target shelves are full.")
+    else
+        HaloTextHelper.addText(player, "Already consolidated - nothing to merge", HaloTextHelper.getColorWhite())
+        player:Say("Every item type's already in one place.")
+    end
+end
+
+-- ============================================================
+-- Tagging: right-click a storage in the world -> "Empire Storage"
+-- ============================================================
+local TAG_GROUPS = {
+    { "Food & Water", {
+        { "Fridge / fresh food", "Perishable" }, { "Canned & dry food", "DryFood" },
+        { "Water & drinks", "Water" }, { "Cooking gear", "Cooking" },
+        { "Compost bin (rotten food)", "Compost" },
+    }},
+    { "Weapons", {
+        { "Guns & Ammo", "Gun,Ammo" }, { "Guns only", "Gun" }, { "Ammo only", "Ammo" },
+        { "Melee weapons", "Weapon" }, { "Gun parts", "GunParts" }, { "Explosives", "Explosives" },
+    }},
+    { "Survival", {
+        { "Medical", "Medical" }, { "Tools", "Tools" }, { "Building materials", "Materials" },
+        { "Chemicals", "Chemicals" }, { "Electronics", "Electronics" }, { "Lights", "Light" },
+        { "Car parts", "VehicleParts" },
+    }},
+    { "Outdoors", {
+        { "Gardening", "Gardening" }, { "Fishing", "Fishing" },
+        { "Trapping", "Trapping" }, { "Camping", "Camping" }, { "Animals", "Animals" },
+    }},
+    { "Goods", {
+        { "Clothing", "Clothing" }, { "Bags", "Bags" }, { "Books", "Books" },
+        { "Skill books", "SkillBooks" }, { "Entertainment", "Entertainment" },
+        { "Household", "Household" }, { "Furniture", "Furniture" }, { "Misc", "Misc" },
+    }},
+}
+
+local function onSetTag(playerNum, obj, str)
+    writeTag(obj, str)
+    local p = getSpecificPlayer(playerNum)
+    if p then
+        local pretty = tostring(str or ""):gsub(",", " + ")
+        HaloTextHelper.addText(p, "LOCKED to: " .. pretty, HaloTextHelper.getColorGreen())
+        p:Say("This one's locked to " .. pretty .. ".")
+    end
+end
+local function onClearTag(playerNum, obj)
+    writeTag(obj, nil)
+    local p = getSpecificPlayer(playerNum)
+    if p then HaloTextHelper.addText(p, "Lock cleared", HaloTextHelper.getColorWhite()) end
+end
+
+local PRETTY = {
+    Perishable="Fresh food", DryFood="Dry food", Water="Water", Cooking="Cooking",
+    Gun="Guns", Weapon="Melee", Ammo="Ammo", GunParts="Gun parts", Explosives="Explosives",
+    Medical="Medical", Tools="Tools", VehicleParts="Car parts", Materials="Materials",
+    Chemicals="Chemicals", Electronics="Electronics", Light="Lights", Gardening="Gardening",
+    Fishing="Fishing", Trapping="Trapping", Camping="Camping", Animals="Animals",
+    Books="Books", SkillBooks="Skill books",
+    Entertainment="Entertainment", Clothing="Clothing", Bags="Bags", Furniture="Furniture",
+    Household="Household", Misc="Misc",
+}
+local function prettyTags(set)
+    local names = {}
+    for cat in pairs(set) do names[#names+1] = PRETTY[cat] or cat end
+    table.sort(names)
+    return table.concat(names, ", ")
+end
+
+local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, test)
+    if test then return end
+    local owner, ownerC = nil, nil
+    for _, o in ipairs(worldobjects) do
+        local c = nil
+        pcall(function() c = o:getContainer() end)
+        if c then owner = o; ownerC = c; break end
+    end
+    if not owner then return end
+
+    -- canonical tag holder = the container's parent: the SAME object the sorter reads,
+    -- so a lock set here is always seen by F9 (incl. vehicles / RV interiors).
+    local holder = owner
+    pcall(function() local pa = ownerC:getParent(); if pa then holder = pa end end)
+
+    local current = readTagSet(ownerC)
+    local label = current and ("Empire Storage (" .. prettyTags(current) .. ")") or "Empire Storage"
+
+    local main = context:addOption(label, nil, nil)
+    local root = ISContextMenu:getNew(context)
+    context:addSubMenu(main, root)
+
+    -- always-visible status line so you can SEE what a container is locked to
+    local statusTxt = current and ("Currently: " .. prettyTags(current)) or "Currently: not locked"
+    local statusOpt = root:addOption(statusTxt, nil, nil)
+    statusOpt.notAvailable = true
+
+    for _, group in ipairs(TAG_GROUPS) do
+        local gopt = root:addOption(group[1], nil, nil)
+        local gsub = ISContextMenu:getNew(root)
+        root:addSubMenu(gopt, gsub)
+        for _, row in ipairs(group[2]) do
+            gsub:addOption(row[1], playerNum, onSetTag, ownerC, row[2])
+        end
+    end
+    if current then root:addOption("-- Clear lock --", playerNum, onClearTag, ownerC) end
+end
+Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
+    local __t0 = getTimestampMs()
+    onFillWorldObjectContextMenu(playerNum, context, worldobjects, test)
+    local __dt = getTimestampMs() - __t0
+    if EMPIRE_DEBUG_ON ~= false and __dt >= 1 then print("[EMPIRE-DEBUG]   H EmpireSortAll: " .. __dt .. "ms") end
+end)
+
+-- ---- right-click inventory option ----
+local function onFillInventoryObjectContextMenu(player, context, items)
+    local playerObj = player
+    if type(player) == "number" then playerObj = getSpecificPlayer(player) end
+    if not playerObj then return end
+    context:addOption("Smart Sort Base", playerObj, smartSort)
+    context:addOption("Consolidate Duplicates", playerObj, consolidateTypes)
+end
+Events.OnFillInventoryObjectContextMenu.Add(onFillInventoryObjectContextMenu)
+
+-- ---- F9 = Smart Sort, End = Consolidate Duplicates ----
+-- (Consolidate is on END, not F10: F10 is already taken by EmpireNPC's dashboard and
+--  99_Debug's logging toggle. END is unused, so no double-fire.)
+local function onKeyPressed(key)
+    local player = getSpecificPlayer(0)
+    if not player or player:isDead() then return end
+    if key == Keyboard.KEY_F9 then
+        pcall(smartSort, player)        -- 1) file everything into its category home
+        pcall(consolidateTypes, player) -- 2) then stack identical items into ONE pile
+    elseif key == Keyboard.KEY_END then
+        pcall(consolidateTypes, player)
+    else
+        return
+    end
+    -- items just moved -> the base material cache is stale; rebuild on next read.
+    if EmpireBaseCache and EmpireBaseCache.invalidate then EmpireBaseCache.invalidate() end
+end
+Events.OnKeyPressed.Add(onKeyPressed)
+
+print("[EmpireSortAll] Smart Sort v10 loaded: + per-type CONSOLIDATE pass (END key / right-click -> Consolidate Duplicates) merges identical items into one pile. F9 = sort, END = consolidate; right-click storage -> Empire Storage to lock.")

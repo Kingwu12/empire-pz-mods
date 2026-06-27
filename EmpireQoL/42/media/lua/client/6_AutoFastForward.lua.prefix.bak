@@ -1,0 +1,84 @@
+-- Empire QoL - Auto Fast Forward
+-- Speeds up time automatically during any timed action (reading, eating,
+-- crafting, sorting, looting/transfers, etc) and drops back to normal the
+-- instant the action ends or a zombie shows up.
+--
+-- WHY THIS DESIGN:
+--   PZ already auto-RESETS speed to 1x when the action queue empties (the vanilla
+--   "Reset game speed after timed action" option). What it never does is speed UP
+--   for you. So this only handles the speed-up + combat safety, and lets the same
+--   tick check drop you back down. Uses UIManager.getSpeedControls(), the exact API
+--   the engine itself uses in ISTimedActionQueue.lua -- no guessing.
+
+-- ===== CONFIG =====
+local TARGET_SPEED = 3    -- 2 = fast (>>), 3 = fastest (>>>). Lower to 2 if 3 overshoots.
+local AVOID_COMBAT = true -- never fast-forward while zombies are visible/chasing/close
+local LINGER_TICKS = 240  -- ~4s grace: keep speed up after the queue empties, so rapid
+                          -- one-by-one transfers (loading a trunk, looting a pile, sorting)
+                          -- don't drop it in the micro-gaps between actions. Combat/aim bails instantly.
+-- ==================
+
+local engaged = false  -- true only while WE are the ones holding the speed up
+local lingerLeft = 0   -- ticks remaining to hold the speed up after the last seen action
+
+local function zombiesNear(player)
+    -- Only count it as unsafe if a zombie is actually COMING for you (chasing) or is
+    -- RIGHT NEXT to you. Merely visible zombies -- the ones milling around outside the
+    -- base while you weld / build / disassemble -- no longer block fast-forward.
+    -- (It still drops to 1x instantly the moment one aggros or closes in.)
+    local s = player:getStats()
+    return s:getNumChasingZombies() > 0
+        or s:getNumVeryCloseZombies() > 0
+end
+
+local function onTick()
+    local player = getSpecificPlayer(0)
+    if not player or player:isDead() or player:isAsleep() then return end
+
+    local speed = UIManager.getSpeedControls()
+    if not speed then return end
+
+    local current = speed:getCurrentGameSpeed()
+    if current == 0 then return end -- respect manual pause, never override it
+
+    local doingAction = ISTimedActionQueue.isPlayerDoingAction(player)
+    local unsafe = (AVOID_COMBAT and zombiesNear(player)) or player:isAiming()
+
+    -- Safety always wins, immediately: drop back the instant combat/aiming starts.
+    if unsafe then
+        if engaged and current == TARGET_SPEED then
+            speed:SetCurrentGameSpeed(1)
+        end
+        engaged = false
+        lingerLeft = 0
+        return
+    end
+
+    -- Refresh the linger window every tick we see an action; otherwise count it down.
+    -- This bridges the sub-second gaps between rapid one-by-one transfers so the
+    -- speed-up actually latches while loading a trunk / looting a pile.
+    if doingAction then
+        lingerLeft = LINGER_TICKS
+    elseif lingerLeft > 0 then
+        lingerLeft = lingerLeft - 1
+    end
+
+    if lingerLeft > 0 then
+        -- Speed up from any slow speed (1x or 2x) to target. We never stomp a manual
+        -- choice that's already at or above target. Re-asserts every tick, so it wins
+        -- the fight against the game's per-action speed reset.
+        if current < TARGET_SPEED then
+            speed:SetCurrentGameSpeed(TARGET_SPEED)
+            engaged = true
+        end
+    else
+        -- Window expired: drop back down if we were the ones holding it up
+        if engaged and current == TARGET_SPEED then
+            speed:SetCurrentGameSpeed(1)
+        end
+        engaged = false
+    end
+end
+
+Events.OnTick.Add(onTick)
+print("[EmpireQoL] Auto Fast Forward loaded (target speed " .. TARGET_SPEED .. ", combat-safe, linger ~2s).")

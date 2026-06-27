@@ -1,0 +1,131 @@
+-- Empire QoL - Smart Build (build straight from your base)
+-- PZ already builds from materials lying LOOSE on the ground in a 3x3 around the spot,
+-- reading each build's own recipe (its "need:" list, e.g. 4 planks + 2 nails) and pulling
+-- exactly those. This extends that proven mechanic two ways:
+--   1) it also reads your nearby STORAGE containers, not just loose ground, and
+--   2) it reaches RADIUS tiles instead of 1.
+-- So: dump materials in your base (shelves OR ground), stand near the build spot, and
+-- builds light up AND consume straight from storage. Surgical per-build, never grab-all.
+-- Nothing nearby -> it falls back to exactly vanilla behaviour.
+
+local RADIUS = 3   -- tiles around the build spot to pull materials from (base game = 1)
+local SB = { consuming = false }
+
+local function eachSquare(center, fn)
+    local cell = getCell()
+    if not cell or not center then return end
+    local cx, cy, cz = center:getX(), center:getY(), center:getZ()
+    for dx = -RADIUS, RADIUS do
+        for dy = -RADIUS, RADIUS do
+            local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
+            if sq then fn(sq) end
+        end
+    end
+end
+
+local function addToMap(map, item)
+    local ft, t = item:getFullType(), item:getType()
+    map[ft] = map[ft] or {}; table.insert(map[ft], item)
+    map[t]  = map[t]  or {}; table.insert(map[t], item)
+end
+
+-- loose GROUND items within RADIUS (this is the widened version of vanilla's 3x3)
+local function scanGround(center)
+    local map = {}
+    eachSquare(center, function(sq)
+        local wobs = sq:getWorldObjects()
+        if wobs then
+            for i = 1, wobs:size() do
+                local item = wobs:get(i - 1):getItem()
+                if item and buildUtil.predicateMaterial(item) then addToMap(map, item) end
+            end
+        end
+    end)
+    return map
+end
+
+-- items inside nearby STORAGE containers within RADIUS (same scan pattern as LootRange)
+local function scanContainers(center, into)
+    local map = into or {}
+    eachSquare(center, function(sq)
+        local function pull(c)
+            if not c then return end
+            local items = c:getItems()
+            for i = 1, items:size() do
+                local item = items:get(i - 1)
+                if buildUtil.predicateMaterial(item) then addToMap(map, item) end
+            end
+        end
+        local sobs = sq:getStaticMovingObjects()
+        for i = 0, sobs:size() - 1 do pull(sobs:get(i):getContainer()) end
+        local obs = sq:getObjects()
+        for i = 0, obs:size() - 1 do
+            local o = obs:get(i)
+            for ci = 1, o:getContainerCount() do pull(o:getContainerByIndex(ci - 1)) end
+        end
+    end)
+    return map
+end
+
+local function installHooks()
+    if not buildUtil or not buildUtil.getMaterialOnGround or not buildUtil.consumeMaterial then
+        print("[EmpireQoL] Smart Build: buildUtil missing, not hooked.")
+        return
+    end
+
+    -- HOOK 1: where builds look for materials (menu availability + the ground consume pass).
+    -- For the MENU we surface storage too (so builds light up); during the actual consume
+    -- pass we return ONLY real ground items (storage items are pulled into hands in HOOK 2,
+    -- so the vanilla ground branch never tries to world-remove a container item).
+    local orig_gmog = buildUtil.getMaterialOnGround
+    buildUtil.getMaterialOnGround = function(square)
+        local ok, map = pcall(function()
+            local m = scanGround(square)
+            if not SB.consuming then scanContainers(square, m) end
+            return m
+        end)
+        if ok and map then return map end
+        return orig_gmog(square)
+    end
+
+    -- HOOK 2: just before vanilla consumes, pull THIS build's exact needs from nearby
+    -- storage into your inventory; vanilla then consumes them normally (no carrying).
+    local orig_consume = buildUtil.consumeMaterial
+    buildUtil.consumeMaterial = function(ISItem)
+        pcall(function()
+            if not ISItem or not ISItem.player or ISBuildMenu.cheat or not ISItem.sq then return end
+            local playerInv = getSpecificPlayer(ISItem.player):getInventory()
+            for index, value in pairs(ISItem.modData) do
+                local isNeed = luautils.stringStarts(index, "need:")
+                local isUse  = luautils.stringStarts(index, "use:")
+                if isNeed or isUse then
+                    local fullType = luautils.split(index, ":")[2]
+                    local want = tonumber(value) or 0
+                    local have = playerInv:getSomeTypeEvalRecurse(fullType, buildUtil.predicateMaterial, want):size()
+                    local short = (isUse and 1 or want) - have
+                    if short > 0 then
+                        local pool = scanContainers(ISItem.sq)[fullType]
+                        local pulled = 0
+                        if pool then
+                            for _, item in ipairs(pool) do
+                                if pulled >= short then break end
+                                local src = item:getContainer()
+                                if src then src:Remove(item) end
+                                playerInv:addItem(item)
+                                pulled = pulled + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        SB.consuming = true
+        local res = { pcall(orig_consume, ISItem) }
+        SB.consuming = false
+        if res[1] then return res[2] else return {} end
+    end
+
+    print("[EmpireQoL] Smart Build loaded. Builds read storage + ground within " .. RADIUS .. " tiles.")
+end
+
+Events.OnGameStart.Add(installHooks)

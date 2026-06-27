@@ -1,0 +1,79 @@
+-- Empire NPC - NPC Scanner FIXED
+-- Uses correct SSC API: SSM.SuperSurvivors[i] up to SSM.SurvivorCount
+
+require "EmpireNPC_Shared"
+
+local SCAN_INTERVAL = 300
+local scanTick = 0
+
+local function getActiveSurvivors()
+    local survivors = {}
+    -- SSC stores survivors in SSM.SuperSurvivors indexed 0..SurvivorCount
+    if not SSM then return survivors end
+    if not SSM.SuperSurvivors then return survivors end
+    local count = SSM.SurvivorCount or 0
+    for i = 0, count + 1 do
+        local ss = SSM.SuperSurvivors[i]
+        if ss and not ss:isDead() then
+            -- EXCLUDE the human player: SSC keeps YOU in SuperSurvivors too. Never let the
+            -- empire auto-assign / arm / dress / deploy the player. Skip the local player.
+            local isPlayer = false
+            pcall(function()
+                local ch = ss:Get()
+                if ch == getSpecificPlayer(0) then isPlayer = true end
+                if ch and ch:isLocalPlayer() then isPlayer = true end
+            end)
+            -- most reliable (SSC-native): player's character modData ID == the real player ID
+            pcall(function()
+                local ch = ss:Get()
+                if ch and SSM and SSM.getRealPlayerID then
+                    local md = ch:getModData()
+                    if md and md.ID ~= nil and md.ID == SSM:getRealPlayerID() then isPlayer = true end
+                end
+            end)
+            if not isPlayer then
+                table.insert(survivors, ss)
+            end
+        end
+    end
+    return survivors
+end
+
+EmpireNPC.getActiveSurvivors = getActiveSurvivors
+
+local function syncSurvivors()
+    if not SSM then return end
+    local survivors = getActiveSurvivors()
+    for _, ss in ipairs(survivors) do
+        local ok, err = pcall(function()
+            local name = ss:getName() or ""
+            if name ~= "" then
+                EmpireNPC.getSettler(name)
+            end
+        end)
+    end
+end
+
+local function onTick()
+    scanTick = scanTick + 1
+    if scanTick < SCAN_INTERVAL then return end
+    scanTick = 0
+    pcall(syncSurvivors)
+end
+
+Events.OnTick.Add(onTick)
+
+Events.OnGameStart.Add(function()
+    EmpireNPC.loadData()
+    local initTick = 0
+    local function initScan()
+        initTick = initTick + 1
+        if initTick > 180 then
+            pcall(syncSurvivors)
+            Events.OnTick.Remove(initScan)
+        end
+    end
+    Events.OnTick.Add(initScan)
+end)
+
+print("[EmpireNPC] NPC Scanner loaded.")

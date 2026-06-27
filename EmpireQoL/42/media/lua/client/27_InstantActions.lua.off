@@ -1,0 +1,36 @@
+-- Empire QoL - Instant Actions v1
+-- Cuts the WAIT out of tedious "mini action" timed actions (looting / moving items) the same
+-- way Fast Craft does for crafting. The action still performs its real work -- the items still
+-- move exactly as normal (that happens in perform(), unaffected) -- it just completes near-
+-- instantly instead of playing out the full timed bar.
+-- Scoped to a LIST of action classes below, so combat, medical, building, etc. keep normal
+-- timing. To skip another action's wait, add its global ISxxx class name to INSTANT_ACTIONS.
+
+local ACTION_TICKS = 1   -- forced action length (1 = effectively instant)
+
+local INSTANT_ACTIONS = {
+    "ISInventoryTransferAction",   -- moving / looting items between containers (the big one)
+    "ISGrabItemAction",            -- picking an item up off the ground
+}
+
+local function hook(className)
+    local cls = _G[className]
+    if type(cls) ~= "table" or not cls.new then
+        print("[EmpireQoL] Instant Actions: " .. className .. " not found, skipped.")
+        return
+    end
+    local origNew = cls.new
+    cls.new = function(self, ...)
+        local o = origNew(self, ...)
+        pcall(function() if o then o.maxTime = ACTION_TICKS end end)
+        return o
+    end
+    print("[EmpireQoL] Instant Actions: hooked " .. className)
+end
+
+local function install()
+    for _, name in ipairs(INSTANT_ACTIONS) do hook(name) end
+    print("[EmpireQoL] Instant Actions v1 loaded (looting/transfers instant).")
+end
+
+Events.OnGameStart.Add(install)

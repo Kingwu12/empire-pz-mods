@@ -1,0 +1,29 @@
+-- Empire QoL - Fast Craft -- v1
+-- Crafting (ammo smelting especially) is super realistic but takes forever in-game. This
+-- cuts the WAIT out of every craft. The action still runs, so the recipe's math -- consume
+-- ingredients, create the result -- happens exactly as normal (that's in perform(), which
+-- is unaffected). It just completes near-instantly instead of grinding the full recipe time.
+-- Applies to ALL crafting. This is the same state the game already uses for "instant" timed
+-- actions, just scoped to crafting only -- combat/other actions keep their normal timing.
+--
+-- Batches still craft one-at-a-time, so 300 ammo is a quick few-second burst rather than a
+-- single frame -- and that's deliberate: creating 300+ items in ONE frame is exactly what
+-- crashes the smelting mod. Pair with the batch picker (Craft All -> 50/100/200/300/max).
+
+local CRAFT_TICKS = 1   -- craft action length (1 = effectively instant). Raise for a slower feel.
+
+local function install()
+    if type(ISCraftAction) ~= "table" or not ISCraftAction.new then
+        print("[EmpireQoL] Fast Craft: ISCraftAction missing, not hooked.")
+        return
+    end
+    local origNew = ISCraftAction.new
+    function ISCraftAction:new(character, item, time, recipe, container, containers)
+        local o = origNew(self, character, item, time, recipe, container, containers)
+        pcall(function() if o then o.maxTime = CRAFT_TICKS end end)
+        return o
+    end
+    print("[EmpireQoL] Fast Craft v1 loaded. All crafting completes near-instantly (action length " .. CRAFT_TICKS .. " tick).")
+end
+
+Events.OnGameStart.Add(install)

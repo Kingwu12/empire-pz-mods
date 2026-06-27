@@ -1,0 +1,36 @@
+-- Empire QoL - Proximity Inventory Optimizer
+-- ProximityInventory's merged loot view copies EVERY item from EVERY nearby container
+-- into one combined list on every panel refresh. With the 5x5 range + big hoard rooms,
+-- that's thousands of items recopied constantly -- the core of "loot around you" lag.
+--
+-- This caps it: containers holding more than MERGE_ITEM_LIMIT items are NOT folded into
+-- the merged view; they show as their own container button instead. So the per-refresh
+-- merge stays cheap no matter how massive your storage gets, and small everyday
+-- containers still merge normally. Keeps the 5x5 range fully intact.
+--
+-- We wrap ProxInv.canBeAdded, which OnButtonsAdded calls per container to decide what to
+-- merge -- it's a live table lookup, so wrapping the field actually takes effect.
+
+local MERGE_ITEM_LIMIT = 80   -- raise for more merging (more lag), lower for less. Big crates above this stay separate.
+
+local function install()
+    if not ProxInv or type(ProxInv.canBeAdded) ~= "function" then
+        print("[EmpireQoL] ProxInv Optimizer: ProximityInventory not found, skipping.")
+        return
+    end
+    local orig = ProxInv.canBeAdded
+    ProxInv.canBeAdded = function(container, playerObj)
+        local ok, allow = pcall(orig, container, playerObj)
+        if not ok or not allow then return false end
+        -- skip merging oversized containers: cap the per-refresh copy cost
+        local okc, n = pcall(function() return container:getItems():size() end)
+        if okc and n and n > MERGE_ITEM_LIMIT then
+            return false
+        end
+        return true
+    end
+    print("[EmpireQoL] ProxInv Optimizer active: containers over " .. MERGE_ITEM_LIMIT .. " items stay as their own button (keeps merged view light in big rooms).")
+end
+
+Events.OnGameStart.Add(install)
+print("[EmpireQoL] ProxInv Optimizer queued.")

@@ -1,0 +1,35 @@
+-- 96_LootRefreshTimer.lua
+-- SAFE measurement only. Times the loot-panel rebuild, which is where
+-- ProximityInventory's "merge everything in the room" work happens
+-- (it fires synchronously inside refreshBackpacks via the buttonsAdded event).
+-- No behaviour change, no duplication. Just prints timing when it's slow.
+
+local origRefresh = ISInventoryPage.refreshBackpacks
+
+function ISInventoryPage:refreshBackpacks()
+    local t0 = getTimestampMs()
+    origRefresh(self)
+    local dt = getTimestampMs() - t0
+
+    if EMPIRE_DEBUG_ON ~= false and dt >= 8 then
+        local nBags = 0
+        if self.backpacks then nBags = #self.backpacks end
+
+        -- rough item total across the merged containers, so we can see
+        -- whether time scales with how much loot is around you
+        local nItems = 0
+        if self.backpacks then
+            for i = 1, #self.backpacks do
+                local bp = self.backpacks[i]
+                if bp and bp.inventory and bp.inventory.getItems then
+                    local items = bp.inventory:getItems()
+                    if items then nItems = nItems + items:size() end
+                end
+            end
+        end
+
+        print("[EMPIRE-DEBUG] loot refresh: " .. dt .. "ms  containers=" .. nBags .. "  items=" .. nItems)
+    end
+end
+
+print("[EMPIRE-DEBUG] 96_LootRefreshTimer loaded (loot-panel timing active)")

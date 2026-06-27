@@ -1,0 +1,423 @@
+-- Empire QoL - Smart Build (build straight from your base) -- v4
+-- v4 (base-wide): RADIUS 3 -> 20 so you build from anywhere in the warehouse; the nearby
+--   STORAGE scan now recurses into nested bags/crates (a box inside a shelf), so build mats
+--   packed inside a container are still found + consumed; the consume pass scans base
+--   storage + carried ONCE per build (live) instead of once per material, so the bigger
+--   radius never re-scans the base per ingredient. Menu scan stays cached (see v3 note).
+-- Empire QoL - Smart Build (build straight from your base) -- v3 CACHED
+-- PZ already builds from materials lying LOOSE on the ground in a 3x3 around the spot,
+-- reading each build's own recipe (its "need:" list, e.g. 4 planks + 2 nails) and pulling
+-- exactly those. This extends that proven mechanic three ways:
+--   1) it also reads your nearby STORAGE containers, not just loose ground,
+--   2) it reaches RADIUS tiles instead of 1, and
+--   3) (v2) it pulls from any container YOU'RE CARRYING -- worn bags AND equipped
+--      containers like the Hydrocraft pallet truck -- so you never hand-move nails/planks.
+-- So: dump materials in your base (shelves OR ground) or just carry them in your bag/cart,
+-- stand near the build spot, and builds light up AND consume straight from there.
+-- Surgical per-build, never grab-all. Nothing usable -> exactly vanilla behaviour.
+--
+-- v3 PERF FIX (the right-click lag killer): getMaterialOnGround is called ONCE PER
+-- BUILDABLE PIECE while the build menu populates (~800 calls on a Hydrocraft base). v2
+-- ran a full 7x7 ground+container scan on EVERY one of those calls -> ~4800ms right-click
+-- hangs that scaled with how much storage you'd hoarded nearby. v3 caches that heavy scan
+-- per build-square with a short TTL, so one right-click's ~800 menu calls collapse to a
+-- SINGLE scan. The consume pass is unchanged and always re-scans LIVE, so what you build
+-- from is never stale -- the cache only feeds the menu's "can I build this?" check.
+
+local RADIUS = 8   -- tiles around the build spot to pull materials from (base game = 1). v4.1: dialed back from 20; scanning a hoarded warehouse on every right-click is what brought the lag back.
+local SB = { consuming = false }
+local SB_DEBUG = false   -- was true; it printed every frame the build cursor is up ("MENU base map ...") which spammed the console DURING builds, dropped FPS, and that low FPS is what got your walk-to-build action flagged bugged & cleared. Off now.
+
+local function eachSquare(center, fn)
+    local cell = getCell()
+    if not cell or not center then return end
+    local cx, cy, cz = center:getX(), center:getY(), center:getZ()
+    for dx = -RADIUS, RADIUS do
+        for dy = -RADIUS, RADIUS do
+            local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
+            if sq then fn(sq) end
+        end
+    end
+end
+
+local function addToMap(map, item)
+    local ft, t = item:getFullType(), item:getType()
+    map[ft] = map[ft] or {}; table.insert(map[ft], item)
+    map[t]  = map[t]  or {}; table.insert(map[t], item)
+end
+
+-- loose GROUND items within RADIUS (this is the widened version of vanilla's 3x3)
+local function scanGround(center)
+    local map = {}
+    eachSquare(center, function(sq)
+        local wobs = sq:getWorldObjects()
+        if wobs then
+            for i = 1, wobs:size() do
+                local item = wobs:get(i - 1):getItem()
+                if item and buildUtil.predicateMaterial(item) then addToMap(map, item) end
+            end
+        end
+    end)
+    return map
+end
+
+-- items inside nearby STORAGE containers within RADIUS (same scan pattern as LootRange).
+-- v4: recurse into any container-ITEM sitting inside a shelf (a bag/crate inside a crate),
+-- so build mats packed in a nested container are still found AND consumed. 'seen' is shared
+-- across the whole scan so a container is never walked twice.
+local function scanContainers(center, into)
+    local map = into or {}
+    local seen = {}
+    local function pull(c, depth)
+        if not c or depth > 1 then return end
+        local items = c:getItems()
+        for i = 1, items:size() do
+            local item = items:get(i - 1)
+            if buildUtil.predicateMaterial(item) then addToMap(map, item) end
+            if instanceof(item, "InventoryContainer") then
+                local sub = nil
+                pcall(function() sub = item:getInventory() end)
+                if sub and not seen[sub] then seen[sub] = true; pull(sub, depth + 1) end
+            end
+        end
+    end
+    eachSquare(center, function(sq)
+        local sobs = sq:getStaticMovingObjects()
+        for i = 0, sobs:size() - 1 do pull(sobs:get(i):getContainer(), 0) end
+        local obs = sq:getObjects()
+        for i = 0, obs:size() - 1 do
+            local o = obs:get(i)
+            for ci = 1, o:getContainerCount() do pull(o:getContainerByIndex(ci - 1), 0) end
+        end
+    end)
+    return map
+end
+
+-- v2: materials inside containers the player CARRIES (worn bags + equipped trolley).
+-- depth 0 = the main inventory itself, whose loose top-level items vanilla already
+-- consumes -- so we only collect things nested one or more levels deep (i.e. inside a
+-- bag or the pallet truck), which is exactly what vanilla can't reach.
+local function scanCarried(player)
+    local map = {}
+    if not player then return map end
+    local seen = {}
+    local function walk(container, depth)
+        if not container or depth > 5 then return end
+        local items = container:getItems()
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            if depth >= 1 and buildUtil.predicateMaterial(it) then addToMap(map, it) end
+            if instanceof(it, "InventoryContainer") then
+                local sub = nil
+                pcall(function() sub = it:getInventory() end)
+                if sub and not seen[sub] then seen[sub] = true; walk(sub, depth + 1) end
+            end
+        end
+    end
+    pcall(function() walk(player:getInventory(), 0) end)
+    return map
+end
+
+local carriedCache = { t = 0, map = nil }
+local function scanCarriedCached(player)
+    local now = getTimestampMs()
+    if carriedCache.map and (now - carriedCache.t) < 250 then return carriedCache.map end
+    carriedCache.map = scanCarried(player)
+    carriedCache.t = now
+    return carriedCache.map
+end
+
+-- ---- v3 menu-scan cache --------------------------------------------------------
+-- The build menu calls getMaterialOnGround once per buildable piece, almost always for
+-- the SAME target square, all within one sub-second burst. We cache the full menu map
+-- (ground + storage + carried) per square key for a short TTL so that burst costs ONE
+-- scan instead of hundreds. The consume pass never uses this (see HOOK 1), so the
+-- materials you actually build from are always read live -- the cache is menu-only.
+local GROUND_TTL = 1200  -- ms; covers a right-click's menu calls + brief cursor repositioning so the heavy base scan isn't repeated as you nudge the build cursor
+local menuMapCache = {}  -- "x|y|z" -> { t = ms, map = table }
+
+local function sqKey(square)
+    if not square then return nil end
+    local ok, k = pcall(function()
+        return square:getX() .. "|" .. square:getY() .. "|" .. square:getZ()
+    end)
+    return ok and k or nil
+end
+
+-- Whole-base material map for the MENU, derived from the shared EmpireBaseCache (the same
+-- index craft + F9 sort use). Built once per cache version (memoised on item count), so opening
+-- Build never re-sweeps the base. THIS is what makes builds light up from your ENTIRE base
+-- instead of only the tiles around the build spot.
+local baseMenu = { stamp = nil, map = nil }
+local function baseCacheMap()
+    if not (EmpireBaseCache and EmpireBaseCache.get) then return nil end
+    local c = nil
+    pcall(function() c = EmpireBaseCache.get() end)
+    if not c or not c.containers then
+        if SB_DEBUG then print("[SmartBuild] MENU base map = NIL (player not detected in a base) -> nearby-radius fallback") end
+        return nil
+    end
+    local stamp = tostring(c.totalItems) .. ":" .. tostring(#c.containers)
+    if baseMenu.map and baseMenu.stamp == stamp then return baseMenu.map end
+    local map, seen = {}, {}
+    for _, cont in ipairs(c.containers) do
+        if cont and not seen[cont] then
+            seen[cont] = true
+            local items = nil
+            pcall(function() items = cont:getItems() end)
+            if items then
+                for i = 0, items:size() - 1 do
+                    local it = items:get(i)
+                    local ok = false
+                    pcall(function() ok = buildUtil.predicateMaterial(it) end)
+                    if ok then addToMap(map, it) end
+                end
+            end
+        end
+    end
+    baseMenu.map, baseMenu.stamp = map, stamp
+    if SB_DEBUG then
+        local n = 0; for _ in pairs(map) do n = n + 1 end
+        print(string.format("[SmartBuild] MENU base map built: %d containers / %d material keys (WHOLE base)", #c.containers, n))
+    end
+    return map
+end
+
+-- WHOLE-BASE consume source: every build material across the entire base, read LIVE (never
+-- memoised -- the consume step must always see current contents). This is the same reach
+-- crafting has. nil when not in a base -> caller falls back to the nearby-radius scan.
+local function baseStorageMap()
+    if not (EmpireBaseCache and EmpireBaseCache.get) then return nil end
+    local c = nil
+    pcall(function() c = EmpireBaseCache.get() end)
+    if not c or not c.containers then return nil end
+    local map, seen = {}, {}
+    for _, cont in ipairs(c.containers) do
+        if cont and not seen[cont] then
+            seen[cont] = true
+            local items = nil
+            pcall(function() items = cont:getItems() end)
+            if items then
+                for i = 0, items:size() - 1 do
+                    local it = items:get(i)
+                    local ok = false
+                    pcall(function() ok = buildUtil.predicateMaterial(it) end)
+                    if ok then addToMap(map, it) end
+                end
+            end
+        end
+    end
+    return map
+end
+
+-- v5.1 TARGETED consume scan: only the fullTypes THIS build needs, pulled straight from the
+-- containers the cache already indexes for each type, stopping as soon as it has enough of each.
+-- On a big base this touches a couple of crates instead of re-indexing every material every build
+-- -- this (plus not re-sweeping the base after each build) is what kills the wait between builds.
+local function baseStorageMapFor(wants)
+    if not (EmpireBaseCache and EmpireBaseCache.get) then return nil end
+    local any = false; for _ in pairs(wants) do any = true; break end
+    if not any then return nil end
+    local c = nil
+    pcall(function() c = EmpireBaseCache.get() end)
+    if not c then return nil end
+    local map = {}
+    for ft, w in pairs(wants) do
+        local cap = w; if cap < 1 then cap = 1 end
+        local conts = nil
+        pcall(function() conts = EmpireBaseCache.containersFor(ft) end)
+        if conts then
+            local got = 0
+            for _, cont in ipairs(conts) do
+                if got >= cap then break end
+                local items = nil
+                pcall(function() items = cont:getItems() end)
+                if items then
+                    for i = 0, items:size() - 1 do
+                        if got >= cap then break end
+                        local it = items:get(i)
+                        local itft = nil
+                        pcall(function() itft = it:getFullType() end)
+                        if itft == ft then
+                            local ok = false
+                            pcall(function() ok = buildUtil.predicateMaterial(it) end)
+                            if ok then
+                                map[ft] = map[ft] or {}
+                                map[ft][#map[ft] + 1] = it
+                                got = got + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return map
+end
+
+local function buildMenuMap(square)
+    local m = scanGround(square)
+    local bm = baseCacheMap()
+    if bm then
+        -- In a base: light up from the WHOLE base (cache-backed, no per-tile re-scan).
+        for ft, list in pairs(bm) do
+            m[ft] = m[ft] or {}
+            for _, it in ipairs(list) do table.insert(m[ft], it) end
+        end
+    else
+        -- Not in a base: fall back to the nearby-storage radius scan.
+        scanContainers(square, m)
+    end
+    local carried = scanCarriedCached(getSpecificPlayer(0))
+    for ft, list in pairs(carried) do
+        m[ft] = m[ft] or {}
+        for _, it in ipairs(list) do table.insert(m[ft], it) end
+    end
+    return m
+end
+
+local function menuMapCached(square)
+    local key = sqKey(square)
+    local now = getTimestampMs()
+    if key then
+        local c = menuMapCache[key]
+        if c and c.map and (now - c.t) < GROUND_TTL then return c.map end
+    end
+    local m = buildMenuMap(square)
+    if key then
+        -- prune so the table can't grow unbounded as you build around the map
+        local n = 0; for _ in pairs(menuMapCache) do n = n + 1 end
+        if n > 48 then menuMapCache = {} end
+        menuMapCache[key] = { t = now, map = m }
+    end
+    return m
+end
+
+local function installHooks()
+    if not buildUtil or not buildUtil.getMaterialOnGround or not buildUtil.consumeMaterial then
+        print("[EmpireQoL] Smart Build: buildUtil missing, not hooked.")
+        return
+    end
+
+    -- HOOK 1: where builds look for materials (menu availability + the ground consume pass).
+    -- MENU pass: surface ground + storage + carried bags/cart, CACHED per square (short TTL)
+    --   so builds light up without re-scanning your whole base ~800 times per right-click.
+    -- CONSUME pass (SB.consuming): return ONLY real ground items, scanned LIVE -- everything
+    --   else is pulled into hands in HOOK 2, so the vanilla ground branch never
+    --   world-removes a held item, and a stale cache can never cause a bad consume.
+    local orig_gmog = buildUtil.getMaterialOnGround
+    buildUtil.getMaterialOnGround = function(square)
+        local ok, map = pcall(function()
+            if SB.consuming then return scanGround(square) end
+            -- Suppress the heavy WHOLE-base scan ONLY during the world right-click strip pass
+            -- (30_BuildMenu runs every provider then discards the result -- that throwaway pass
+            -- was the 2.5s freeze). The Build button AND build-placement validation must still
+            -- see the whole base, so everything else falls through to the cached map below.
+            if EmpireBuild and EmpireBuild.rightClickStripping then return orig_gmog(square) end
+            return menuMapCached(square)
+        end)
+        if ok and map then return map end
+        return orig_gmog(square)
+    end
+
+    -- HOOK 2: just before vanilla consumes, pull THIS build's exact needs into your main
+    -- inventory -- first from nearby storage, then (safety net) from any bag/cart you're
+    -- carrying that vanilla can't reach. Vanilla then consumes from top level (no carrying).
+    -- This path always scans LIVE (never the menu cache), so consumption is exact.
+    local orig_consume = buildUtil.consumeMaterial
+    buildUtil.consumeMaterial = function(ISItem)
+        pcall(function()
+            if not ISItem or not ISItem.player or ISBuildMenu.cheat or not ISItem.sq then return end
+            local playerObj = getSpecificPlayer(ISItem.player)
+            local playerInv = playerObj:getInventory()
+            -- v4: scan base storage + carried ONCE for this whole build (LIVE, never the menu
+            -- cache), reused across every material need so a 20-tile radius never re-scans the
+            -- base per ingredient. 'pulledSeen' guarantees no item is lifted to hands twice.
+            -- WHOLE base when you're in one (same reach as crafting); nearby-radius otherwise.
+            -- v5.1 PERF: work out the FEW materials this build needs FIRST, then pull only those
+            -- from the crates the cache already knows hold them -- instead of indexing every
+            -- material in the whole base on every placement. This is the "wait between fences" fix.
+            local wants = {}
+            for index, value in pairs(ISItem.modData) do
+                if luautils.stringStarts(index, "need:") or luautils.stringStarts(index, "use:") then
+                    local ft = luautils.split(index, ":")[2]
+                    if ft then wants[ft] = math.max(wants[ft] or 0, tonumber(value) or 0) end
+                end
+            end
+            local storageMap = baseStorageMapFor(wants) or scanContainers(ISItem.sq)
+            local carriedMap = scanCarried(playerObj)
+            local pulledSeen = {}
+            for index, value in pairs(ISItem.modData) do
+                local isNeed = luautils.stringStarts(index, "need:")
+                local isUse  = luautils.stringStarts(index, "use:")
+                if isNeed or isUse then
+                    local fullType = luautils.split(index, ":")[2]
+                    local want = tonumber(value) or 0
+                    local need = (isUse and 1 or want)
+                    -- (a) nearby storage: pull shortfall vs everything the engine can see
+                    local have = playerInv:getSomeTypeEvalRecurse(fullType, buildUtil.predicateMaterial, want):size()
+                    local short = need - have
+                    if short > 0 then
+                        local pool = storageMap[fullType]
+                        local pulled = 0
+                        if pool then
+                            for _, item in ipairs(pool) do
+                                if pulled >= short then break end
+                                if not pulledSeen[item] then
+                                    local src = item:getContainer()
+                                    if src and src ~= playerInv then
+                                        src:Remove(item)
+                                        playerInv:addItem(item)
+                                        pulledSeen[item] = true
+                                        pulled = pulled + 1
+                                    end
+                                end
+                            end
+                        end
+                        -- tell the cache exactly what left the base, so it decrements in place
+                        -- instead of re-sweeping the whole base on the next build.
+                        if pulled > 0 and EmpireBaseCache and EmpireBaseCache.noteConsumed then
+                            pcall(function() EmpireBaseCache.noteConsumed(fullType, pulled) end)
+                        end
+                    end
+                    -- (b) safety net: vanilla consumes from TOP-LEVEL inventory. If the
+                    -- materials are nested in a worn bag or the equipped trolley, lift exactly
+                    -- what's still missing up to top level so vanilla can use them.
+                    local topHave = 0
+                    local topItems = playerInv:getItems()
+                    for ti = 0, topItems:size() - 1 do
+                        local tit = topItems:get(ti)
+                        if tit:getFullType() == fullType and buildUtil.predicateMaterial(tit) then topHave = topHave + 1 end
+                    end
+                    local stillShort = need - topHave
+                    if stillShort > 0 then
+                        local hpool = carriedMap[fullType]
+                        local hp = 0
+                        if hpool then
+                            for _, item in ipairs(hpool) do
+                                if hp >= stillShort then break end
+                                if not pulledSeen[item] then
+                                    local src = item:getContainer()
+                                    if src and src ~= playerInv then
+                                        src:Remove(item)
+                                        playerInv:addItem(item)
+                                        pulledSeen[item] = true
+                                        hp = hp + 1
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        SB.consuming = true
+        local res = { pcall(orig_consume, ISItem) }
+        SB.consuming = false
+        if res[1] then return res[2] else return {} end
+    end
+
+    print("[EmpireQoL] Smart Build v5 loaded. In a base: builds light up AND consume from the WHOLE base (cache-backed), same reach as crafting. Out of a base: nearby " .. RADIUS .. " tiles + worn bags/trolley. Menu scan cached " .. GROUND_TTL .. "ms/square.")
+end
+
+Events.OnGameStart.Add(installHooks)

@@ -1,0 +1,79 @@
+-- Empire QoL - Extended Loot Range (detection)
+-- Base game only shows containers on the 8 tiles touching you (3x3). This widens the
+-- LOOT panel to a 5x5 by adding the outer-ring containers during the SAME refresh stage
+-- ProximityInventory uses ("buttonsAdded"), running BEFORE ProxInv -- so they get folded
+-- into its merged view and positioned by it. That's the fix for the old "phantom boxes
+-- under the floor": we no longer bolt buttons on after ProxInv has already laid things out.
+-- Affects ONLY the nearby/loot panel. Never your own inventory, never a vehicle panel.
+-- Pairs with 13_Reach (REACH=5): every box shown here is also reachable without walking.
+
+-- ===== CONFIG =====
+local LOOT_RADIUS = 2   -- 2 = 5x5 (recommended). 3 = 7x7. Base is 1 (3x3). One number, that's it.
+-- ==================
+
+local function addOuterRing(invSelf)
+    local playerObj = getSpecificPlayer(invSelf.player)
+    if not playerObj then return end
+    if invSelf.onCharacter or playerObj:getVehicle() then return end  -- loot panel only
+
+    local cell = getCell()
+    if not cell then return end
+    local currentSq = playerObj:getCurrentSquare()
+    if not currentSq then return end
+    local cx, cy, cz = playerObj:getX(), playerObj:getY(), playerObj:getZ()
+
+    -- DEDUP: never re-add a container the base 3x3 pass already created a button for.
+    local have = {}
+    for _, b in ipairs(invSelf.backpacks) do
+        if b and b.inventory then have[b.inventory] = true end
+    end
+    local function addOnce(c)
+        if c and not have[c] then
+            have[c] = true
+            local title = getTextOrNull("IGUI_ContainerTitle_" .. c:getType()) or ""
+            invSelf:addContainerButton(c, nil, title, nil)
+        end
+    end
+
+    for dy = -LOOT_RADIUS, LOOT_RADIUS do
+        for dx = -LOOT_RADIUS, LOOT_RADIUS do
+            if dx < -1 or dx > 1 or dy < -1 or dy > 1 then   -- OUTER ring only (base did inner 3x3)
+                local gs = cell:getGridSquare(cx + dx, cy + dy, cz)
+                -- same wall guard the base game uses: don't reach through a blocking wall
+                if gs and (gs == currentSq or not currentSq:isBlockedTo(gs)) then
+                    local sobs = gs:getStaticMovingObjects()   -- lockers, fridges, crates
+                    for i = 0, sobs:size() - 1 do
+                        local so = sobs:get(i)
+                        if so:getContainer() then addOnce(so:getContainer()) end
+                    end
+                    local obs = gs:getObjects()                -- shelves, counters, etc.
+                    for i = 0, obs:size() - 1 do
+                        local o = obs:get(i)
+                        for ci = 1, o:getContainerCount() do
+                            addOnce(o:getContainerByIndex(ci - 1))
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function onRefresh(invSelf, state)
+    if state == "buttonsAdded" then
+        pcall(addOuterRing, invSelf)
+    end
+end
+
+-- Force our handler to run BEFORE ProxInv's merge, regardless of mod load order:
+-- add ours, then pull ProxInv's handler and re-add it so it sits last.
+local function install()
+    Events.OnRefreshInventoryWindowContainers.Add(onRefresh)
+    if ProxInv and ProxInv.OnRefreshInventoryWindowContainers then
+        Events.OnRefreshInventoryWindowContainers.Remove(ProxInv.OnRefreshInventoryWindowContainers)
+        Events.OnRefreshInventoryWindowContainers.Add(ProxInv.OnRefreshInventoryWindowContainers)
+    end
+    local n = LOOT_RADIUS * 2 + 1
+    print("[EmpireQoL] Extended Loot Range loaded: detection " .. n .. "x" .. n .. " (was 3x3), merged ahead of ProxInv.")
+end
+Events.OnGameStart.Add(install)

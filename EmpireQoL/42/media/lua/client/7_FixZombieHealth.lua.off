@@ -1,0 +1,29 @@
+-- Empire QoL - Display Zombie Health compatibility patch
+--
+-- PROBLEM: The workshop mod "Display Zombie Health" defines a global zrnd(num)
+--   = math.floor(num * 100 + 0.5). But it stores a zombie's max health as a STRING
+--   (mHealth = tostring(zrnd(...))) and later feeds that string back into zrnd().
+--   PZ's Lua (Kahlua) does NOT coerce strings in arithmetic like normal Lua 5.1,
+--   so "550" * 100 throws "__mul not defined for operands in zrnd" -- every single
+--   time the player hits a zombie (via playerYelp). That spams console.txt hard.
+--
+-- FIX: We don't touch the workshop file (Steam would wipe it on update). EmpireQoL
+--   loads AFTER Display Zombie Health, so we just overwrite the global zrnd with a
+--   coercion-safe version. tonumber() turns "550" (or nil) into a real number first.
+--
+-- This is a patch-on-top, exactly the right lever for a workshop-mod bug.
+
+local function patchZrnd()
+    -- Only patch if the host mod actually defined zrnd (i.e. it's loaded/enabled).
+    if type(zrnd) == "function" then
+        zrnd = function(num)
+            return math.floor((tonumber(num) or 0) * 100 + 0.5)
+        end
+        print("[EmpireQoL] Patched Display Zombie Health zrnd() to be coercion-safe (no more __mul spam).")
+    end
+end
+
+-- Run once at load (covers the normal case where we load after the host mod)...
+patchZrnd()
+-- ...and re-assert at game start, so it wins regardless of mod load order.
+Events.OnGameStart.Add(patchZrnd)

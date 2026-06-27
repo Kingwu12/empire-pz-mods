@@ -1,0 +1,5 @@
+name=Empire Craft Fix
+id=EmpireCraftFix
+description=Eliminates the crafting menu freeze. Pre-warms the Craft Helper cache on a background timer after game load so the data is ready before you ever open the menu.
+poster=
+url=

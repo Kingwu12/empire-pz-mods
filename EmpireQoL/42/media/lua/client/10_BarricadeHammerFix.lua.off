@@ -1,0 +1,41 @@
+-- 10_BarricadeHammerFix.lua
+-- Fixes a bug in SuperbSurvivorsContinued's ISBarricadeAction override.
+-- SS uses hasEquipped("Hammer") (literal item name "Base.Hammer") instead of
+-- vanilla's hasEquippedTag("Hammer") (the Hammer TAG). That silently rejects
+-- BallPeenHammer, ClawHammer, and every other hammer-tagged tool, so isValid
+-- returns false and the queued barricade action gets cleared ("bugged action").
+-- We re-install a corrected isValid at OnGameStart, AFTER SS has loaded, so ours wins.
+
+local function installBarricadeFix()
+    if not ISBarricadeAction then
+        print("[EmpireQoL] Barricade fix: ISBarricadeAction missing, skipped.")
+        return
+    end
+    ISBarricadeAction.isValid = function(self)
+        if not instanceof(self.item, "BarricadeAble") or self.item:getObjectIndex() == -1 then return false end
+        local barricade = self.item:getBarricadeForCharacter(self.character)
+        if self.isMetal then
+            if barricade then return false end
+            if not self.character:hasEquipped("BlowTorch") or not self.character:hasEquipped("SheetMetal") then return false end
+        elseif self.isMetalBar then
+            if barricade then return false end
+            if not self.character:hasEquipped("BlowTorch") or not self.character:hasEquipped("MetalBar") then return false end
+            if self.character:getInventory():getItemCount("Base.MetalBar", true) < 3 then return false end
+        else
+            if barricade and not barricade:canAddPlank() then return false end
+            -- THE FIX: hasEquippedTag accepts ANY hammer (BallPeen, Claw, etc.); HammerStone still allowed.
+            if not self.character:hasEquippedTag("Hammer") and not self.character:hasEquipped("HammerStone") then return false end
+            if not self.character:hasEquipped("Plank") then return false end
+            if not self.character:getInventory():contains("Nails", true) then return false end
+        end
+        if self.isStarted then
+            if instanceof(self.item, "IsoDoor") or (instanceof(self.item, "IsoThumpable") and self.item:isDoor()) then
+                if self.item:IsOpen() then return false end
+            end
+        end
+        return true
+    end
+    print("[EmpireQoL] Barricade hammer-tag fix installed (any Hammer-tagged tool now works).")
+end
+
+Events.OnGameStart.Add(installBarricadeFix)

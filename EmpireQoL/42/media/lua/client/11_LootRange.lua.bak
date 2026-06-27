@@ -1,0 +1,94 @@
+-- Empire QoL - Extended Loot Range
+-- Base game only shows containers on the 8 tiles touching you (a 3x3 around you).
+-- This widens the LOOT (nearby) panel so containers up to LOOT_RANGE tiles away show
+-- up too -- no more walking onto every crate/shelf. We let the base game run its normal
+-- 3x3 pass, then add the outer ring ourselves using the same addContainerButton call,
+-- so we never copy (and never go stale against) the engine's function.
+-- Affects ONLY the nearby/loot panel -- never your own inventory, never a vehicle panel.
+
+-- ===== CONFIG =====
+local LOOT_RANGE = 3   -- tiles each direction the loot panel shows (base 1, so +2). Pairs with
+                       -- Long Reach (13_Reach.lua, REACH=4): boxes shown here are reachable, so
+                       -- they both show AND loot with no walking. Raise both together for more.
+-- ==================
+
+local function addOuterRing(self, playerObj)
+    local cell = getCell()
+    if not cell then return end
+    local cx, cy, cz = playerObj:getX(), playerObj:getY(), playerObj:getZ()
+    local currentSq = playerObj:getCurrentSquare()
+    local seenVeh = {}
+
+    -- DEDUP: never re-add a container the base game's 3x3 pass (or an earlier ring
+    -- tile) already made a button for. This is what stops the repeating shelves.
+    local have = {}
+    for _, b in ipairs(self.backpacks) do
+        if b and b.inventory then have[b.inventory] = true end
+    end
+    local function addOnce(c, title)
+        if c and not have[c] then
+            have[c] = true
+            self:addContainerButton(c, nil, title, nil)
+        end
+    end
+
+    for dy = -LOOT_RANGE, LOOT_RANGE do
+        for dx = -LOOT_RANGE, LOOT_RANGE do
+            -- skip the inner 3x3 -- the base game already added those containers
+            if dx < -1 or dx > 1 or dy < -1 or dy > 1 then
+                local gs = cell:getGridSquare(cx + dx, cy + dy, cz)
+                -- same wall guard the base game uses, so we don't reach through walls
+                if gs and currentSq and (gs == currentSq or not currentSq:isBlockedTo(gs)) then
+
+                    -- static furniture containers (lockers, fridges, etc.)
+                    local sobs = gs:getStaticMovingObjects()
+                    for i = 0, sobs:size() - 1 do
+                        local so = sobs:get(i)
+                        local c = so:getContainer()
+                        if c then
+                            local title = getTextOrNull("IGUI_ContainerTitle_" .. c:getType()) or ""
+                            addOnce(c, title)
+                        end
+                    end
+
+                    -- world objects (crates, shelves, counters with containers)
+                    local obs = gs:getObjects()
+                    for i = 0, obs:size() - 1 do
+                        local o = obs:get(i)
+                        for ci = 1, o:getContainerCount() do
+                            local c = o:getContainerByIndex(ci - 1)
+                            local title = getTextOrNull("IGUI_ContainerTitle_" .. c:getType()) or ""
+                            addOnce(c, title)
+                        end
+                    end
+
+                    -- vehicles parked within range
+                    local veh = gs:getVehicleContainer()
+                    if veh and not seenVeh[veh] then
+                        seenVeh[veh] = true
+                        for pi = 1, veh:getPartCount() do
+                            local part = veh:getPartByIndex(pi - 1)
+                            if part:getItemContainer() and veh:canAccessContainer(pi - 1, playerObj) then
+                                local tt = getText("IGUI_VehiclePart" .. part:getItemContainer():getType())
+                                addOnce(part:getItemContainer(), tt)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+local orig_refreshBackpacks = ISInventoryPage.refreshBackpacks
+function ISInventoryPage:refreshBackpacks()
+    orig_refreshBackpacks(self)
+    -- only widen the nearby/loot panel -- not your own inventory, not a vehicle's panel
+    if self.onCharacter then return end
+    local playerObj = getSpecificPlayer(self.player)
+    if not playerObj or playerObj:getVehicle() then return end
+    local ok, err = pcall(addOuterRing, self, playerObj)
+    if not ok then print("[EmpireQoL ERROR] LootRange: " .. tostring(err)) end
+end
+
+print("[EmpireQoL] Loot Range loaded. Nearby containers reach " .. LOOT_RANGE .. " tiles (base 1), de-duplicated.")

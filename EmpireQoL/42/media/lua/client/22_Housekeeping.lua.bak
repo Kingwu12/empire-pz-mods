@@ -1,0 +1,127 @@
+-- Empire QoL - Auto Housekeeping v1
+-- (A) TOOL RETURN: right after you finish a timed action (build/repair/etc), a tool left in
+--     your hand is stowed back into your bag -- but only when it's safe (no zombies on you),
+--     so you're never disarmed going into a fight.
+-- (B) GARBAGE TIDY: empties from eating/drinking are handled -- USEFUL empties (cans, bottles,
+--     jars) move into your bag if there's room; listed JUNK is dropped on the ground. Only
+--     ever touches items on the lists below, so it can never bin something you wanted.
+-- All pcall-guarded.
+
+-- ===== CONFIG =====
+local STOW_TOOLS   = true
+local TIDY_GARBAGE = true
+local CHECK_TICKS  = 30
+
+-- Hand items stowed after an action (by display category). Hammers/saws are tools here.
+local STOW_CATEGORIES = { Tool = true, ToolWeapon = true }
+
+-- Empties worth keeping: moved into your bag if there's room (water/craft containers).
+local KEEP_EMPTIES = {
+    ["Base.TinCanEmpty"] = true, ["Base.WaterBottleEmpty"] = true, ["Base.PopBottle"] = true,
+    ["Base.Jar"] = true, ["Base.JarLid"] = true,
+}
+-- Pure junk: dropped on the ground. Add any item type you want auto-binned.
+local DROP_JUNK = {
+    ["Base.PopEmpty"] = true,
+}
+-- ==================
+
+local function getBag(player)
+    local cont = nil
+    pcall(function() local b = player:getClothingItem_Back(); if b then cont = b:getInventory() end end)
+    if cont then return cont end
+    pcall(function()
+        local worn = player:getWornItems()
+        if worn then
+            local best, bestCap = nil, -1
+            for i = 0, worn:size() - 1 do
+                local it = nil; pcall(function() it = worn:getItemByIndex(i) end)
+                if it and instanceof(it, "InventoryContainer") then
+                    local c = it:getInventory()
+                    if c and (c:getCapacity() or 0) > bestCap then best, bestCap = c, c:getCapacity() end
+                end
+            end
+            cont = best
+        end
+    end)
+    return cont
+end
+
+local function isSafe(player)
+    local s = player:getStats()
+    return s:getNumVeryCloseZombies() == 0 and s:getNumChasingZombies() == 0
+end
+
+local function isBusy(player)
+    local b = false
+    pcall(function() b = ISTimedActionQueue.hasTimedActions(player) end)
+    return b
+end
+
+-- (A) stow a tool sitting in your hands back into your bag
+local function stowToolsInHands(player)
+    if not isSafe(player) then return end          -- never disarm you near zombies
+    local prim = player:getPrimaryHandItem()
+    if not prim then return end
+    local cat = nil; pcall(function() cat = prim:getDisplayCategory() end)
+    if not (cat and STOW_CATEGORIES[cat]) then return end
+    local bag = getBag(player)
+    if not (bag and bag:hasRoomFor(player, prim)) then return end
+    pcall(function()
+        if player:getSecondaryHandItem() == prim then player:setSecondaryHandItem(nil) end
+        player:setPrimaryHandItem(nil)
+        bag:addItem(prim)
+        player:getInventory():Remove(prim)
+    end)
+end
+
+-- (B) garbage helpers
+local function dropOnGround(player, item)
+    local sq = player:getCurrentSquare(); if not sq then return false end
+    return pcall(function()
+        local cont = item:getContainer()
+        if cont then cont:Remove(item) end
+        sq:AddWorldInventoryItem(item, 0.5, 0.5, 0.0)
+    end)
+end
+
+local function tidyGarbage(player)
+    local bag = getBag(player)
+    local function process(cont, isMain)
+        if not cont then return end
+        local items = cont:getItems()
+        local todo = {}
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            local ft = nil; pcall(function() ft = it:getFullType() end); ft = ft or ""
+            if DROP_JUNK[ft] then todo[#todo + 1] = { it = it, drop = true }
+            elseif KEEP_EMPTIES[ft] and isMain then todo[#todo + 1] = { it = it, drop = false } end
+        end
+        for _, e in ipairs(todo) do
+            if e.drop then
+                dropOnGround(player, e.it)
+            elseif bag and bag ~= cont and bag:hasRoomFor(player, e.it) then
+                pcall(function() bag:addItem(e.it); cont:Remove(e.it) end)
+            end
+        end
+    end
+    process(player:getInventory(), true)   -- main inv: junk -> ground, useful empties -> bag
+    process(bag, false)                    -- bag: drop junk that ended up here
+end
+
+-- ===== tick =====
+local wasBusy, tick = false, 0
+local function onTick()
+    tick = tick + 1
+    if tick < CHECK_TICKS then return end
+    tick = 0
+    local player = getSpecificPlayer(0)
+    if not player or player:isDead() then return end
+    local busy = isBusy(player)
+    if STOW_TOOLS and wasBusy and not busy then pcall(stowToolsInHands, player) end
+    wasBusy = busy
+    if TIDY_GARBAGE and not busy then pcall(tidyGarbage, player) end
+end
+Events.OnTick.Add(onTick)
+
+print("[EmpireQoL] Auto Housekeeping loaded. Tool-return + garbage tidy active.")

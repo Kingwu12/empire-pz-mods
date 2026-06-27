@@ -1,0 +1,123 @@
+-- Empire QoL - FPS Diagnostic (passive auto-capture)
+-- Settles the megabase FPS question EMPIRICALLY with zero manual probing. Samples frame
+-- throughput + the transient world state a TP-reload flushes (zombie count, loaded-survivor
+-- count, nearby object density) every SAMPLE_MS of real time. When FPS drops below TANK_FPS it
+-- auto-dumps the lead-up buffer, logs live through the tank, and marks recovery -- so a single
+-- natural drop captures its own before/during/after. Output: console (tag [FPS-DIAG]) + a clean
+-- CSV at C:\Users\user\Zomboid\fps_diag.csv. Whichever metric moves WITH the fps drop is the
+-- culprit. Changes NO gameplay. Read fps_diag.csv after it catches a tank.
+
+local SAMPLE_MS = 2000   -- one sample per 2s of real wall-clock time
+local TANK_FPS  = 45     -- below this = tanked; begin event capture
+local BUFFER_N  = 30     -- rolling lead-up samples kept (~60s of history)
+local SWEEP_R   = 15     -- half-width of the object-density box around the player
+
+local lastSampleAt  = 0
+local tickCount     = 0
+local buffer        = {}
+local capturing     = false
+local headerWritten = false
+local csvPath       = "fps_diag.csv"
+
+local function ts() return getTimestampMs() end
+
+-- Zombies loaded in the current cell -- transient; an AI-load signal.
+local function countZombies()
+    local n = -1
+    pcall(function()
+        local cell = getCell()
+        if cell then n = cell:getZombieList():size() end
+    end)
+    return n
+end
+
+-- All loaded SSC survivors (not just your crew) -- random wanderers path-find too and cost frames.
+local function countSurvivors()
+    local n = -1
+    if SSM and SSM.SuperSurvivors then
+        n = 0
+        for _, ss in pairs(SSM.SuperSurvivors) do
+            if ss then
+                local ch = nil
+                pcall(function() ch = ss:Get() end)
+                if ch then n = n + 1 end
+            end
+        end
+    end
+    return n
+end
+
+-- Object density in a box around the player -- the CONTROL. A TP-reload re-streams this
+-- identically, so if it stays flat while fps swings, permanent objects are NOT the cause.
+local function countObjects(player)
+    local total = -1
+    pcall(function()
+        local cell = getCell()
+        if not cell or not player then return end
+        local px = math.floor(player:getX())
+        local py = math.floor(player:getY())
+        local pz = math.floor(player:getZ())
+        total = 0
+        for x = px - SWEEP_R, px + SWEEP_R do
+            for y = py - SWEEP_R, py + SWEEP_R do
+                local sq = cell:getGridSquare(x, y, pz)
+                if sq then total = total + sq:getObjects():size() end
+            end
+        end
+    end)
+    return total
+end
+
+local function writeCSV(line)
+    pcall(function()
+        local w = getFileWriter(csvPath, true, true)
+        if w then w:write(line .. "\r\n"); w:close() end
+    end)
+end
+
+-- Main sampler. Throughput = OnTick calls completed per real second (wall-clock measured),
+-- so a hitch -> fewer ticks complete -> the number drops. Relative drop = real drop.
+Events.OnTick.Add(function()
+    tickCount = tickCount + 1
+    local now = ts()
+    if lastSampleAt == 0 then lastSampleAt = now; return end
+    if now - lastSampleAt < SAMPLE_MS then return end
+
+    local elapsed = now - lastSampleAt
+    local fps = math.floor((tickCount * 1000) / elapsed)
+    tickCount = 0
+    lastSampleAt = now
+
+    local player = getSpecificPlayer(0)
+    local z  = countZombies()
+    local s  = countSurvivors()
+    local o  = countObjects(player)
+    local px = player and math.floor(player:getX()) or -1
+    local py = player and math.floor(player:getY()) or -1
+    local pz = player and math.floor(player:getZ()) or -1
+
+    local sample = { fps=fps, z=z, s=s, o=o, x=px, y=py, zz=pz }
+    table.insert(buffer, sample)
+    if #buffer > BUFFER_N then table.remove(buffer, 1) end
+
+    if not headerWritten then writeCSV("ts,fps,zombies,survivors,objects,x,y,z"); headerWritten = true end
+    writeCSV(string.format("%d,%d,%d,%d,%d,%d,%d,%d", now, fps, z, s, o, px, py, pz))
+
+    if fps < TANK_FPS and not capturing then
+        capturing = true
+        print("[FPS-DIAG] >>> TANK fps="..fps.." -- lead-up ("..#buffer.." samples):")
+        for _, b in ipairs(buffer) do
+            print(string.format("[FPS-DIAG]   fps=%d Z=%d Surv=%d Obj=%d @(%d,%d,%d)",
+                b.fps, b.z, b.s, b.o, b.x, b.y, b.zz))
+        end
+    elseif capturing then
+        print(string.format("[FPS-DIAG]   LIVE fps=%d Z=%d Surv=%d Obj=%d @(%d,%d,%d)",
+            fps, z, s, o, px, py, pz))
+        if fps >= TANK_FPS + 10 then
+            capturing = false
+            print("[FPS-DIAG] <<< RECOVERED fps="..fps.." -- compare to tank rows above.")
+        end
+    end
+end)
+
+print("[EmpireQoL] FPS Diagnostic loaded (passive auto-capture -> console + fps_diag.csv).")

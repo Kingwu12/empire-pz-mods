@@ -1,0 +1,48 @@
+-- Empire QoL - Boredom Killer
+-- Automatically reads a book or watches TV when boredom gets high
+-- So you never get the boredom moodle tanking your XP gain
+
+local CHECK_INTERVAL = 180
+local tickCount = 0
+local BOREDOM_THRESHOLD = 40  -- trigger at 40 boredom (out of 100)
+local isReading = false
+
+local function onTick()
+    tickCount = tickCount + 1
+    if tickCount < CHECK_INTERVAL then return end
+    tickCount = 0
+
+    local player = getSpecificPlayer(0)
+    if not player or player:isDead() or player:isAsleep() then return end
+    -- Don't interrupt if already doing something
+    if player:getPrimaryHandItem() ~= nil then return end
+    if player:getStats():getNumChasingZombies() > 0 then return end
+
+    local boredom = player:getBodyDamage():getBoredomLevel()  -- 0-100 scale
+    if boredom < BOREDOM_THRESHOLD then return end
+
+    -- Find a skill book or magazine in inventory
+    local inv = player:getInventory()
+    local items = inv:getItems()
+    local book = nil
+
+    for i = 0, items:size() - 1 do
+        local item = items:get(i)
+        if item and item:getCategory() == "Literature" then
+            -- Prefer unread skill books
+            local t = item:getType()
+            if string.find(t, "Book") or string.find(t, "Mag") or string.find(t, "VHS") then
+                book = item
+                break
+            end
+        end
+    end
+
+    if book then
+        ISTimedActionQueue.add(ISReadABook:new(player, book))
+        HaloTextHelper.addTextWithArrow(player, "Auto-reading to fight boredom", "[br/]", false, HaloTextHelper.getColorGreen())
+    end
+end
+
+Events.OnTick.Add(onTick)
+print("[EmpireQoL] Boredom Killer loaded.")

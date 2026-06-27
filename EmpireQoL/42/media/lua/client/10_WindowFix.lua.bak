@@ -1,0 +1,79 @@
+-- Empire QoL - Window Fix
+-- Re-adds the vanilla "Barricade" and "Add Sheet" options to windows, in case another
+-- mod is stripping them from the right-click menu. It points at the GAME'S OWN handlers
+-- (ISWorldObjectContextMenu.onBarricade / .onAddSheet), so behaviour is identical to
+-- vanilla -- it just guarantees the options are present. If you're missing materials the
+-- option still shows, greyed, with a note of exactly what you need (so you can tell at a
+-- glance whether the problem was ever a mod or just an empty toolbelt).
+
+local function predicateNotBroken(item)
+    return not item:isBroken()
+end
+
+local function findWindow(worldobjects)
+    for _, o in ipairs(worldobjects) do
+        local ok = false
+        pcall(function()
+            if instanceof(o, "IsoWindow") then ok = true
+            elseif instanceof(o, "IsoThumpable") and o:isWindow() then ok = true end
+        end)
+        if ok then return o end
+    end
+    return nil
+end
+
+local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, test)
+    if test then return end
+    local window = findWindow(worldobjects)
+    if not window then return end
+
+    local player = getSpecificPlayer(playerNum)
+    if not player then return end
+    local inv = player:getInventory()
+
+    -- ---- Barricade (planks) ----
+    -- skip only if the window is already fully plank-barricaded
+    local alreadyFull = false
+    pcall(function()
+        local b = window:getBarricadeForCharacter(player)
+        if b and not b:canAddPlank() then alreadyFull = true end
+    end)
+    if not alreadyFull then
+        local hammer, plank, nails = nil, false, 0
+        pcall(function() hammer = inv:getFirstTagEvalRecurse("Hammer", predicateNotBroken) end)
+        pcall(function() plank = inv:containsTypeRecurse("Plank") end)
+        pcall(function() nails = inv:getItemCountRecurse("Base.Nails") or 0 end)
+        local ready = hammer and plank and nails >= 2
+        local opt = context:addOption("Barricade (planks)", worldobjects,
+            ISWorldObjectContextMenu.onBarricade, window, playerNum)
+        if not ready then
+            opt.notAvailable = true
+            local need = {}
+            if not hammer then need[#need+1] = "a hammer (not broken)" end
+            if not plank then need[#need+1] = "a plank" end
+            if nails < 2 then need[#need+1] = "2 nails" end
+            local tt = ISWorldObjectContextMenu.addToolTip()
+            tt.description = "Need: " .. table.concat(need, ", ")
+            opt.toolTip = tt
+        end
+    end
+
+    -- ---- Add Sheet (cover the window) ----
+    local hasCurtains = false
+    pcall(function() hasCurtains = window.HasCurtains ~= nil and window:HasCurtains() end)
+    if not hasCurtains then
+        local sheet = nil
+        pcall(function() sheet = inv:getFirstTypeRecurse("Sheet") end)
+        local opt = context:addOption("Add Sheet", worldobjects,
+            ISWorldObjectContextMenu.onAddSheet, window, playerNum)
+        if not sheet then
+            opt.notAvailable = true
+            local tt = ISWorldObjectContextMenu.addToolTip()
+            tt.description = "Need: a Sheet"
+            opt.toolTip = tt
+        end
+    end
+end
+Events.OnFillWorldObjectContextMenu.Add(onFillWorldObjectContextMenu)
+
+print("[EmpireQoL] Window Fix loaded. Re-adds Barricade + Add Sheet to windows.")

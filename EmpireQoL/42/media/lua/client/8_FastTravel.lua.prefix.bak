@@ -1,0 +1,132 @@
+-- Empire QoL - Fast Travel & Time Skip
+-- Covers the two big time-sinks AutoFastForward (timed actions) does NOT:
+--   1. DRIVE BOOST (auto): on the open road, time auto-runs at 3x while you cruise,
+--      and snaps back to normal the instant you slow for a turn / town / obstacle, or
+--      a zombie starts chasing or gets right next to you. F5 toggles it off/on.
+--   2. SKIP AHEAD (F6): press once to fast-forward ~8 in-game hours (a night) at 3x,
+--      then walk away -- it stops ITSELF when the time's up or anything dangerous shows.
+--      F6 again cancels early.
+
+-- ===== CONFIG =====
+local DRIVE_BOOST_DEFAULT = true
+local DRIVE_BOOST_KEY = Keyboard.KEY_F5   -- toggle auto drive-boost
+local SKIP_KEY        = Keyboard.KEY_F6   -- start / cancel a timed skip
+local BOOST_SPEED   = 3    -- game speed to use (3 = >>>)
+local DRIVE_ON_KMH  = 40   -- only arm the boost at real cruising speed
+local DRIVE_OFF_KMH = 25   -- drop back below this (hysteresis stops flicker)
+local SKIP_HOURS    = 8     -- in-game hours one Skip Ahead covers
+-- ==================
+
+local driveBoostOn = DRIVE_BOOST_DEFAULT
+local driveEngaged = false
+local skipping = false
+local skipAccum = 0
+local skipLast = 0
+
+local function danger(player)
+    local s = player:getStats()
+    return s:getNumChasingZombies() > 0 or s:getNumVeryCloseZombies() > 0
+end
+
+local function speedCtrl() return UIManager.getSpeedControls() end
+
+local function curSpeed()
+    local sc = speedCtrl()
+    if not sc then return 1 end
+    local v = 1
+    pcall(function() v = sc:getCurrentGameSpeed() end)
+    return v
+end
+
+local function setSpeed(n)
+    local sc = speedCtrl()
+    if sc then pcall(function() sc:SetCurrentGameSpeed(n) end) end
+end
+
+local function stopSkip(player, msg)
+    skipping = false
+    if curSpeed() > 1 then setSpeed(1) end
+    if player and msg then
+        HaloTextHelper.addText(player, msg, HaloTextHelper.getColorWhite())
+    end
+end
+
+local function onTick()
+    local player = getSpecificPlayer(0)
+    if not player or player:isDead() then return end
+
+    local sc = speedCtrl()
+    if not sc then return end
+    local current = curSpeed()
+    if current == 0 then return end  -- respect manual pause
+
+    -- ---- Skip Ahead takes priority while running ----
+    if skipping then
+        if danger(player) then
+            stopSkip(player, "Skip stopped - danger")
+            return
+        end
+        local now = 0
+        pcall(function() now = getGameTime():getTimeOfDay() end)
+        local d = now - skipLast
+        if d < 0 then d = d + 24 end       -- crossed midnight
+        skipAccum = skipAccum + d
+        skipLast = now
+        if skipAccum >= SKIP_HOURS then
+            stopSkip(player, "Skipped ~" .. SKIP_HOURS .. "h")
+            return
+        end
+        if current ~= BOOST_SPEED then setSpeed(BOOST_SPEED) end
+        return
+    end
+
+    -- ---- Auto Drive Boost ----
+    if not driveBoostOn then return end
+    local veh = nil
+    pcall(function() veh = player:getVehicle() end)
+    local driving = false
+    if veh then pcall(function() driving = (veh:getDriver() == player) end) end
+
+    if driving and not danger(player) then
+        local kmh = 0
+        pcall(function() kmh = math.abs(veh:getCurrentSpeedKmHour()) end)
+        if kmh >= DRIVE_ON_KMH then
+            if current == 1 then setSpeed(BOOST_SPEED); driveEngaged = true end
+        elseif kmh < DRIVE_OFF_KMH then
+            if driveEngaged and current == BOOST_SPEED then setSpeed(1) end
+            driveEngaged = false
+        end
+    else
+        if driveEngaged and current == BOOST_SPEED then setSpeed(1) end
+        driveEngaged = false
+    end
+end
+Events.OnTick.Add(onTick)
+
+local function onKey(key)
+    local player = getSpecificPlayer(0)
+    if not player or player:isDead() then return end
+    if key == SKIP_KEY then
+        if skipping then
+            stopSkip(player, "Skip cancelled")
+        else
+            skipping = true
+            skipAccum = 0
+            pcall(function() skipLast = getGameTime():getTimeOfDay() end)
+            HaloTextHelper.addText(player, "Skipping ~" .. SKIP_HOURS .. "h (F6 cancels)",
+                HaloTextHelper.getColorGreen())
+        end
+    elseif key == DRIVE_BOOST_KEY then
+        driveBoostOn = not driveBoostOn
+        if driveBoostOn then
+            HaloTextHelper.addText(player, "Drive Boost ON", HaloTextHelper.getColorGreen())
+        else
+            if driveEngaged and curSpeed() > 1 then setSpeed(1) end
+            driveEngaged = false
+            HaloTextHelper.addText(player, "Drive Boost OFF", HaloTextHelper.getColorWhite())
+        end
+    end
+end
+Events.OnKeyPressed.Add(onKey)
+
+print("[EmpireQoL] Fast Travel loaded. Drive Boost auto (F5 toggles), Skip Ahead = F6.")

@@ -1,0 +1,48 @@
+-- Empire QoL - Low Fuel Warning
+-- Alerts when any nearby/driven vehicle drops below 25% fuel
+
+local CHECK_INTERVAL = 600  -- check every 10 seconds
+local tickCount = 0
+local FUEL_THRESHOLD = 0.25  -- 25%
+local alertedVehicles = {}   -- prevent spam
+
+local function onTick()
+    tickCount = tickCount + 1
+    if tickCount < CHECK_INTERVAL then return end
+    tickCount = 0
+
+    local player = getSpecificPlayer(0)
+    if not player or player:isDead() then return end
+
+    -- Check vehicle player is in
+    local vehicle = player:getVehicle()
+    if vehicle then
+        local part = vehicle:getPartById("EngineDoor")
+        if not part then part = vehicle:getPartById("Engine") end
+
+        local fuelPart = vehicle:getPartById("GasTank")
+        if fuelPart then
+            local fuelCur, fuelMax = 0, 0
+            pcall(function()
+                fuelCur = fuelPart:getContainerContentAmount()
+                fuelMax = fuelPart:getContainerCapacity()
+            end)
+            if not fuelMax or fuelMax <= 0 then return end
+            local ratio = fuelCur / fuelMax
+            local vid = vehicle:getId()
+
+            if ratio < FUEL_THRESHOLD and not alertedVehicles[vid] then
+                alertedVehicles[vid] = true
+                local pct = math.floor(ratio * 100)
+                HaloTextHelper.addTextWithArrow(player,
+                    "LOW FUEL: " .. pct .. "% - Refuel soon!", "[br/]", false, HaloTextHelper.getColorRed())
+                player:Say("Low fuel warning: " .. pct .. "%!")
+            elseif ratio >= FUEL_THRESHOLD then
+                alertedVehicles[vid] = nil  -- reset when refueled
+            end
+        end
+    end
+end
+
+Events.OnTick.Add(onTick)
+print("[EmpireQoL] Low Fuel Warning loaded.")

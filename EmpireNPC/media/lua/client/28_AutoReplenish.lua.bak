@@ -1,0 +1,95 @@
+-- Empire NPC - Auto Replenish (organic crew replacement)
+-- Keeps your settlement at CREW_CAP without a cheat button. When you're AT BASE and your crew is
+-- below the cap (someone died, or you're rebuilding), a single new survivor turns up near the
+-- settlement and joins -- trickled one at a time, never past the cap. No survivors spawn anywhere
+-- else in the world. ADDITIVE ONLY (it spawns; it never deletes). Garrison then auto-equips and
+-- role-assigns the new arrival like any other base survivor.
+-- Pair with SSC SpawnRate = 0 so these arrivals are the ONLY survivors that ever appear.
+
+require "EmpireNPC_Shared"
+
+local CREW_CAP     = 8        -- keep this in sync with Fill-Crew's TARGET (INSERT)
+local CHECK_MS     = 20000    -- look at the roster every 20s (real time)
+local TRICKLE_MS   = 120000   -- at most one arrival every 2 min, so they don't pour in at once
+local OFFSET_MIN   = 5        -- arrivals appear this far from you...
+local OFFSET_MAX   = 10       -- ...out to this far (at the settlement edge, not on your face)
+
+local lastCheck, lastSpawn = 0, 0
+
+local function crewCount()
+    local n = 0
+    pcall(function() if EmpireNPC.getActiveSurvivors then n = #EmpireNPC.getActiveSurvivors() end end)
+    return n
+end
+
+local function arrivalSquare(player)
+    local cell = getCell()
+    if not cell then return player:getCurrentSquare() end
+    local pz = math.floor(player:getZ())
+    for _ = 1, 8 do
+        local ang  = ZombRand(0, 360) * math.pi / 180
+        local dist = OFFSET_MIN + ZombRand(0, OFFSET_MAX - OFFSET_MIN + 1)
+        local x = math.floor(player:getX() + math.cos(ang) * dist)
+        local y = math.floor(player:getY() + math.sin(ang) * dist)
+        local sq = cell:getGridSquare(x, y, pz)
+        if sq then
+            local solid = true
+            pcall(function() solid = sq:isSolid() or sq:isSolidTrans() end)
+            if not solid then return sq end
+        end
+    end
+    return player:getCurrentSquare()
+end
+
+-- Spawn one survivor near the settlement and fold them into your group. No Follow task here (that
+-- would collide with the 3-guard follower cap) -- they idle at base and Garrison auto-equips and
+-- assigns them a role on its next pass, exactly like any other base survivor.
+local function arrive(player)
+    local ok = false
+    pcall(function()
+        local sq = arrivalSquare(player)
+        if not sq then return end
+        local ss = SSM:spawnSurvivor(nil, sq)
+        if not ss then return end
+        local ch = ss:Get()
+        if ch then local md = ch:getModData(); md.MetPlayer = true; md.isHostile = false end
+        local mp = SSM:Get(0)
+        if not mp then return end
+        local Group
+        if mp:getGroupID() == nil then
+            Group = SSGM:newGroup(); Group:addMember(mp, "Leader")
+        else
+            Group = SSGM:GetGroupById(mp:getGroupID())
+        end
+        if not Group then return end
+        Group:addMember(ss, Get_SS_JobText("Companion"))
+        ok = true
+    end)
+    return ok
+end
+
+Events.OnTick.Add(function()
+    local now = getTimestampMs()
+    if now - lastCheck < CHECK_MS then return end
+    lastCheck = now
+
+    local player = getSpecificPlayer(0)
+    if not player or player:isDead() then return end
+    if not (SSM and SSGM) then return end
+
+    -- only while you're at base (so arrivals come to the settlement, in loaded chunks)
+    local atBase = false
+    pcall(function() atBase = EmpireBases and EmpireBases.activeBase and EmpireBases.activeBase(player) ~= nil end)
+    if not atBase then return end
+
+    if crewCount() >= CREW_CAP then return end          -- full roster, nobody arrives
+    if now - lastSpawn < TRICKLE_MS then return end      -- one at a time
+
+    if arrive(player) then
+        lastSpawn = now
+        pcall(function() HaloTextHelper.addText(player, "A survivor arrives at the settlement", HaloTextHelper.getColorGreen()) end)
+        print("[EmpireNPC Replenish] arrival spawned (crew below " .. CREW_CAP .. ").")
+    end
+end)
+
+print("[EmpireNPC] Auto Replenish loaded -- at base, crew trickles back up to " .. CREW_CAP .. " on its own.")

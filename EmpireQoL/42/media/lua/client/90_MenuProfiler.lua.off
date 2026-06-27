@@ -1,0 +1,82 @@
+-- Empire QoL - Menu Build Profiler v2 (per-option NAME tally)
+-- CONFIRMED: the world right-click freeze is ~850 options being added per click, and it
+-- scales with nearby storage. Something adds ~1 menu entry per nearby item. This version
+-- names the culprit: it tallies every option added during the build and prints the most
+-- frequent names + the first few in order. The mod responsible will show as a huge count
+-- (e.g. "812x 'Grab ...'"). Read-only. One summary per right-click, tagged [EMPIRE-PROF].
+
+local INPROGRESS = false
+local marks = {}
+local t0 = 0
+
+local function install()
+    if EMPIRE_MENU_PROF then return end
+    if type(ISWorldObjectContextMenu) ~= "table" or type(ISContextMenu) ~= "table" then return end
+    EMPIRE_MENU_PROF = true
+
+    local origAdd = ISContextMenu.addOption
+    ISContextMenu.addOption = function(self, name, ...)
+        if INPROGRESS then
+            marks[#marks + 1] = tostring(name)
+        end
+        return origAdd(self, name, ...)
+    end
+
+    local origCreate = ISWorldObjectContextMenu.createMenu
+    ISWorldObjectContextMenu.createMenu = function(player, worldobjects, x, y, test)
+        local wasNested = INPROGRESS
+        if not wasNested then
+            INPROGRESS = true
+            marks = {}
+            t0 = getTimestampMs()
+        end
+
+        local ok, ret = pcall(origCreate, player, worldobjects, x, y, test)
+
+        if not wasNested then
+            local total = getTimestampMs() - t0
+            INPROGRESS = false
+            if total >= 200 then
+                local n = #marks
+                print("[EMPIRE-PROF] ===== world menu build: " .. total .. "ms   options=" .. n .. " =====")
+
+                -- first few options, in the order they were added
+                local head = {}
+                for i = 1, math.min(8, n) do head[#head + 1] = "'" .. marks[i] .. "'" end
+                print("[EMPIRE-PROF]  first options: " .. table.concat(head, ", "))
+
+                -- frequency tally: which option NAME is being spammed
+                local count = {}
+                for i = 1, n do count[marks[i]] = (count[marks[i]] or 0) + 1 end
+                local arr = {}
+                for name, c in pairs(count) do arr[#arr + 1] = { name = name, c = c } end
+                table.sort(arr, function(a, b) return a.c > b.c end)
+                print("[EMPIRE-PROF]  most frequent option names (this is the culprit):")
+                for i = 1, #arr do
+                    print(string.format("[EMPIRE-PROF]     %5dx  '%s'", arr[i].c, arr[i].name))
+                end
+                -- the TOP-LEVEL menu only: exactly what you see before opening any submenu.
+                -- This is the list we trim from -- submenu items (build pieces etc) are not here.
+                pcall(function()
+                    if ret and type(ret) == "table" and ret.options then
+                        print("[EMPIRE-PROF]  --- TOP-LEVEL options you see on right-click ---")
+                        for i = 1, #ret.options do
+                            local o = ret.options[i]
+                            local tag = (o and o.subOption and o.subOption ~= 0) and "  >submenu" or ""
+                            print(string.format("[EMPIRE-PROF]   [%2d] '%s'%s", i, tostring(o and o.name), tag))
+                        end
+                        print("[EMPIRE-PROF]  --- end top-level ---")
+                    end
+                end)
+                print("[EMPIRE-PROF] ===== end =====")
+            end
+        end
+
+        if not ok then error(ret) end
+        return ret
+    end
+
+    print("[EmpireQoL] Menu Profiler v3 loaded. Right-click ONCE near the laggy spot; full TOP-LEVEL option list dumps to console.txt under [EMPIRE-PROF].")
+end
+
+Events.OnGameStart.Add(install)

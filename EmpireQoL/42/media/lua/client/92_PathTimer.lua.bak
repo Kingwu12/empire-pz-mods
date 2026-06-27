@@ -1,0 +1,34 @@
+-- 92_PathTimer.lua
+-- Times the adjacent-tile pathfinding vanilla createMenu runs near the top of EVERY
+-- right-click (line ~422: AdjacentFreeTileFinder.Find / isTileOrAdjacent). Prime suspect
+-- for the flat ~200ms that doesn't depend on inventory or world-object count.
+-- SAFE: value-replaces Lua table functions that are looked up dynamically at call time.
+-- No event wrapping, no triggerEvent, no Remove/Add, no duplication.
+
+local function timed(name, tbl, key)
+    if type(tbl) ~= "table" or type(tbl[key]) ~= "function" then
+        print("[EMPIRE-DEBUG] pathtimer: " .. name .. " NOT FOUND")
+        return
+    end
+    local orig = tbl[key]
+    tbl[key] = function(...)
+        local t0 = getTimestampMs()
+        local r1, r2, r3 = orig(...)
+        local dt = getTimestampMs() - t0
+        if EMPIRE_DEBUG_ON ~= false and dt >= 1 then
+            print("[EMPIRE-DEBUG]   path " .. name .. ": " .. dt .. "ms")
+        end
+        return r1, r2, r3
+    end
+    print("[EMPIRE-DEBUG] pathtimer wrapped " .. name)
+end
+
+local function install()
+    timed("AFTF.Find",             AdjacentFreeTileFinder, "Find")
+    timed("AFTF.FindWindowOrDoor", AdjacentFreeTileFinder, "FindWindowOrDoor")
+    timed("AFTF.isTileOrAdjacent", AdjacentFreeTileFinder, "isTileOrAdjacent")
+    timed("AFTF.FindEdge",         AdjacentFreeTileFinder, "FindEdge")
+    print("[EMPIRE-DEBUG] 92_PathTimer installed")
+end
+
+Events.OnGameStart.Add(install)

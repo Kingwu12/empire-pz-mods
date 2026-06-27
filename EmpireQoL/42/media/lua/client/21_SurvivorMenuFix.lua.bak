@@ -1,0 +1,56 @@
+-- Empire QoL - Survivor Menu Fix
+-- ROOT CAUSE of the multi-second right-click freeze:
+-- SuperbSurvivors' SurvivorsFillWorldObjectContextMenu runs SurvivorsSquareContextHandle on
+-- the clicked tile PLUS the 8 surrounding tiles, and builds a full command submenu
+-- (survivorMenu: orders list + nested loot-types + weapon swap + medical + talk) for EVERY
+-- survivor standing on any of those 9 tiles. Your followers cluster around you, so each world
+-- right-click rebuilds that heavy menu for the whole pack -- which is why the time scaled
+-- lockstep with your survivor count (0.9s -> 8.4s).
+--
+-- FIX: only build the survivor menu for the EXACT tile you clicked, not the 8 neighbours.
+-- You still get a survivor's command menu by right-clicking directly ON them; you just stop
+-- paying to build the entire cluster's menus every click. ALL survivors are kept.
+--
+-- SS calls SurvivorsSquareContextHandle by global name at call-time, so value-replacing it is
+-- safe; the budget is reset at the start of each menu via a deferred Remove+Add wrap of the
+-- registered handler (the clean pattern -- no duplicated menus).
+
+local PATCHED = false
+local builtThisMenu = false   -- have we already handled the clicked tile for this right-click?
+
+local function doPatch()
+    if PATCHED then return end
+    if type(SurvivorsSquareContextHandle) ~= "function"
+        or type(SurvivorsFillWorldObjectContextMenu) ~= "function" then
+        return   -- SuperbSurvivors not ready yet; scheduler will retry next tick
+    end
+    PATCHED = true
+
+    -- (1) clicked-tile-only: the first SurvivorsSquareContextHandle call per menu is the tile
+    --     under the cursor (SS calls it first); the next 8 are neighbours -> skip those.
+    local origSquare = SurvivorsSquareContextHandle
+    SurvivorsSquareContextHandle = function(square, context)
+        if builtThisMenu then return end
+        builtThisMenu = true
+        return origSquare(square, context)
+    end
+
+    -- (2) reset the budget at the start of every world menu build, by wrapping SS's registered
+    --     handler. Remove the original + add a wrapper (deferred = clean, no double menus).
+    local origFill = SuperbSurvivorsFill or SurvivorsFillWorldObjectContextMenu
+    Events.OnFillWorldObjectContextMenu.Remove(origFill)
+    Events.OnFillWorldObjectContextMenu.Add(function(player, context, worldobjects, test)
+        builtThisMenu = false
+        return origFill(player, context, worldobjects, test)
+    end)
+
+    print("[EmpireQoL] Survivor Menu Fix loaded: world right-click builds the survivor menu for the CLICKED tile only (was the full 3x3 cluster). All survivors kept.")
+end
+
+local function scheduler()
+    doPatch()
+    if PATCHED then Events.OnTick.Remove(scheduler) end
+end
+
+-- defer to ticks after game start so SuperbSurvivors is fully loaded before we swap it
+Events.OnGameStart.Add(function() Events.OnTick.Add(scheduler) end)

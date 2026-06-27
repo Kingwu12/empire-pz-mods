@@ -1,0 +1,52 @@
+-- Empire QoL :: 34_FastCraftPlus.lua -- finishes the job FastCraft (26) started.
+-- FastCraft only zeroes the CRAFT action. But when a recipe pulls ingredients from a
+-- container or your base (anything not already in your pockets), the game queues an
+-- ISInventoryTransferAction to haul each item in -- and another to put leftovers back --
+-- and THOSE still tick down at full speed. That is the "some recipes are instant, some
+-- grind" you saw: recipes whose mats are already in your inventory fly; recipes pulling
+-- from bins/base grind on the transfers. Evolved/cooking recipes also use a separate
+-- action (ISAddItemInRecipe). This zeroes both so EVERY craft path is one tick.
+--
+-- Batches still run one-at-a-time on purpose (one frame per item avoids the smelting-mod
+-- mass-create crash), but each step is now a single tick -- so Craft N / Craft All rip
+-- through as a quick burst instead of grinding.
+
+local FAST_TRANSFERS      = true   -- instant inventory moves (NOTE: also speeds normal looting). Set false to keep looting normal.
+local FAST_ADD_INGREDIENT = true   -- instant evolved/cooking ingredient adds
+
+local function install()
+    -- 1) Ingredient haul-in + leftover return -- the actual ammo-craft grind. -----------
+    if FAST_TRANSFERS and type(ISInventoryTransferAction) == "table" and ISInventoryTransferAction.new then
+        local origNew = ISInventoryTransferAction.new
+        function ISInventoryTransferAction:new(...)
+            local o = origNew(self, ...)
+            pcall(function()
+                -- only speed up the slow ones; leave the 0-time favorite-item kludge alone
+                if o and o.maxTime and o.maxTime > 1 then
+                    o.maxTime = 1
+                    -- per-item time is cached into the queue at new() time; zero it too
+                    if o.queueList and o.queueList[1] and o.queueList[1].time and o.queueList[1].time > 1 then
+                        o.queueList[1].time = 1
+                    end
+                end
+            end)
+            return o
+        end
+        print("[EmpireQoL] FastCraft+ : inventory transfers near-instant.")
+    end
+
+    -- 2) Evolved/cooking recipes (Add Ingredient) use their own action. -----------------
+    if FAST_ADD_INGREDIENT and type(ISAddItemInRecipe) == "table" and ISAddItemInRecipe.new then
+        local origNew2 = ISAddItemInRecipe.new
+        function ISAddItemInRecipe:new(...)
+            local o = origNew2(self, ...)
+            pcall(function() if o and o.maxTime and o.maxTime > 1 then o.maxTime = 1 end end)
+            return o
+        end
+        print("[EmpireQoL] FastCraft+ : evolved-recipe ingredient adds near-instant.")
+    end
+
+    print("[EmpireQoL] FastCraft+ loaded. Every craft path (craft + ingredient haul + return) now completes in one tick.")
+end
+
+Events.OnGameStart.Add(install)

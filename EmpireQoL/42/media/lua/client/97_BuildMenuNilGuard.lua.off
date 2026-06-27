@@ -1,0 +1,42 @@
+-- Empire QoL - Improved Build Menu nil-guard
+-- ------------------------------------------------------------------------------------
+-- Fixes a crash that is NOT ours. Improved Build Menu's WELDING menu calls
+-- ISBlacksmithMenu.getMaterialCount() (checking for a welding mask) plus its own
+-- ISMetalWeldingMenu.getMaterialCount / getMaterialUses. Those read the tables
+--   .groundItemCounts  and  .groundItemUses
+-- which are ONLY populated when that mod's own doBuildMenu runs. When the welding
+-- handler fires before the blacksmith handler has ever populated its table (a
+-- handler-ordering quirk inside that mod), the table is nil and you get:
+--   "attempted index: nil" -> ISBlacksmithMenu.lua getMaterialCount.
+--
+-- Fix: default all four tables to {} once at game start. Once they're a real table
+-- they're never set back to nil (doBuildMenu only ever REPLACES them with a fresh
+-- table, and the early-return paths leave the old one in place), so this single init
+-- closes the nil window for good. Worst case before the real menu populates: a tooltip
+-- shows inventory-only counts for one frame. No other behaviour changes. Update-safe:
+-- this lives in OUR mod and never touches the workshop files.
+-- ------------------------------------------------------------------------------------
+
+local function guardBuildMenuTables()
+    local patched = {}
+    pcall(function()
+        if ISBlacksmithMenu then
+            ISBlacksmithMenu.groundItemCounts = ISBlacksmithMenu.groundItemCounts or {}
+            ISBlacksmithMenu.groundItemUses   = ISBlacksmithMenu.groundItemUses   or {}
+            table.insert(patched, "ISBlacksmithMenu")
+        end
+        if ISMetalWeldingMenu then
+            ISMetalWeldingMenu.groundItemCounts = ISMetalWeldingMenu.groundItemCounts or {}
+            ISMetalWeldingMenu.groundItemUses   = ISMetalWeldingMenu.groundItemUses   or {}
+            table.insert(patched, "ISMetalWeldingMenu")
+        end
+    end)
+    if #patched > 0 then
+        print("[EmpireQoL] Build-menu nil-guard applied to: " .. table.concat(patched, ", ") ..
+              " (groundItemCounts / groundItemUses defaulted, prevents welding-menu nil crash).")
+    else
+        print("[EmpireQoL] Build-menu nil-guard: Improved Build Menu not detected, nothing to guard.")
+    end
+end
+
+Events.OnGameStart.Add(guardBuildMenuTables)

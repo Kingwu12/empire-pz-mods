@@ -1,0 +1,108 @@
+-- Empire NPC - Survival Layer v1
+-- Stops your survivors dying pointlessly, WITHOUT touching SSC's combat brain:
+--   * AUTO-RETREAT: a companion (following you) whose health drops below a threshold gets
+--     yanked back to you and put on Follow, so they don't get swarmed and die beside you.
+--   * AUTO-HEAL (Medic): if you have a survivor assigned Medic, injured survivors (base or
+--     companion) get their bleeding stopped and health slowly restored. Bites/infection are
+--     left alone on purpose (no cheating death from infection). Never heals the player.
+-- All pcall-guarded. Health read via BodyDamage:getOverallBodyHealth() (0-100).
+
+require "EmpireNPC_Shared"
+
+local R = EmpireNPC.Roles
+
+-- ===== CONFIG =====
+local RETREAT_HP       = 40     -- companion below this % health is pulled back to you
+local RETREAT_INTERVAL = 100    -- ticks between retreat checks (~1.5s, responsive in a fight)
+local HEAL_INTERVAL    = 300    -- ticks between Medic heal passes
+local HEAL_AMOUNT      = 3      -- health restored per body part per heal pass
+
+local isCompanion = EmpireNPC.isCompanion or function(ss)
+    local m; pcall(function() m = ss:getAIMode() end)
+    return m == "Follow"
+end
+
+local function hpOf(char)
+    local hp = 100
+    pcall(function() hp = char:getBodyDamage():getOverallBodyHealth() end)
+    return hp or 100
+end
+
+local function announce(text, good)
+    local p = getSpecificPlayer(0); if not p then return end
+    pcall(function()
+        HaloTextHelper.addText(p, text, good and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorRed())
+    end)
+end
+
+-- ----- AUTO-RETREAT -----
+local function autoRetreat()
+    if not SSM then return end
+    local p = getSpecificPlayer(0); if not p then return end
+    for _, ss in ipairs(EmpireNPC.getActiveSurvivors()) do
+        local ch = ss:Get()
+        if ch and ch ~= getSpecificPlayer(0) and isCompanion(ss) then   -- never the player
+            if not ch:isDead() and hpOf(ch) < RETREAT_HP then
+                local pulled = pcall(function()
+                    ss:getTaskManager():clear()
+                    ch:setX(p:getX()); ch:setY(p:getY()); ch:setZ(p:getZ())
+                    SurvivorOrder(true, ch, "Follow", nil)  -- re-issue real follow (mode + task + target)
+                end)
+                if pulled then
+                    announce((ss:getName() or "Companion") .. " pulled back (low HP)", false)
+                end
+            end
+        end
+    end
+end
+
+-- ----- AUTO-HEAL (Medic) -----
+local function hasMedic()
+    for _, ss in ipairs(EmpireNPC.getActiveSurvivors()) do
+        local name = ss:getName()
+        if name and name ~= "" then
+            local s = EmpireNPC.settlers[name]
+            if s and s.role == R.MEDIC then return true end
+        end
+    end
+    return false
+end
+
+local function healChar(char)
+    local bd = char:getBodyDamage(); if not bd then return false end
+    local parts = bd:getBodyParts(); if not parts then return false end
+    local stoppedBleed = false
+    for i = 0, parts:size() - 1 do
+        local bp = parts:get(i)
+        pcall(function()
+            if bp:bleeding() then bp:setBleedingTime(0); stoppedBleed = true end
+            if bp:getHealth() < 100 then bp:AddHealth(HEAL_AMOUNT) end
+        end)
+    end
+    return stoppedBleed
+end
+
+local function autoHeal()
+    if not SSM then return end
+    if not hasMedic() then return end
+    for _, ss in ipairs(EmpireNPC.getActiveSurvivors()) do
+        local ch = ss:Get()
+        if ch and ch ~= getSpecificPlayer(0) and not ch:isDead() and hpOf(ch) < 100 then
+            local stopped = false
+            pcall(function() stopped = healChar(ch) end)
+            if stopped then announce("Medic patched " .. (ss:getName() or "survivor"), true) end
+        end
+    end
+end
+
+-- ----- ticks -----
+local retreatTick, healTick = 0, 0
+local function onTick()
+    retreatTick = retreatTick + 1
+    healTick    = healTick + 1
+    if retreatTick >= RETREAT_INTERVAL then retreatTick = 0; pcall(autoRetreat) end
+    if healTick    >= HEAL_INTERVAL    then healTick    = 0; pcall(autoHeal) end
+end
+Events.OnTick.Add(onTick)
+
+print("[EmpireNPC] Survival Layer loaded. Auto-retreat (<" .. RETREAT_HP .. "% HP companions) + Medic auto-heal active.")

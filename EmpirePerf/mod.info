@@ -1,0 +1,5 @@
+name=Empire Performance
+id=EmpirePerf
+description=Engine-level performance patches for Build 41. Reduces zombie AI tick overhead, defers expensive inventory scans, throttles redundant tooltip redraws, and improves chunk update pacing. Tuned for RTX 3060 + Ryzen 5 3600.
+poster=
+url=

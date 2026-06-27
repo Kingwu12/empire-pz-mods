@@ -1,0 +1,215 @@
+-- ============================================================
+-- Empire Ammo Run  (EmpireQoL)
+-- ------------------------------------------------------------
+-- Right-click a gun / magazine / ammo in your inventory ->
+--   "Empire: Gather ammo & mags (nearby)".
+-- It scans nearby storage and pulls every MAGAZINE and ROUND that the firearms you
+-- are carrying actually use, into your inventory -- so you can reload without first
+-- hand-carrying everything across the base. Same idea as building pulling materials
+-- from around you.
+--
+-- SAFETY: this only MOVES items (the same addItem/Remove transfer the sorter uses).
+-- It never loads rounds into mags itself, never alters the reload mechanic, and never
+-- touches/relocates your guns. Worst case it grabs nothing. Your looted ammo is safe.
+--
+-- It reads each gun's MagazineType + AmmoType at RUN TIME, so it works for Brita,
+-- Arsenal GunFighter, and vanilla alike -- no caliber list to maintain.
+-- ============================================================
+
+local RADIUS = 12   -- same reach as the sorter; widen if your gun room is bigger
+
+local function getPlayerObj(player)
+    if type(player) == "number" then return getSpecificPlayer(player) end
+    return player
+end
+
+local function safeFullType(item)
+    local ft = nil
+    pcall(function() ft = item:getFullType() end)
+    return ft
+end
+
+local function safeAmmoType(item)
+    local at = nil
+    pcall(function() at = item:getAmmoType() end)
+    return at
+end
+
+local function isGunItem(item)
+    local g = false
+    pcall(function() g = instanceof(item, "HandWeapon") end)
+    if not g then return false end
+    local ranged = false
+    pcall(function() ranged = item:isRanged() end)
+    return ranged == true
+end
+
+-- Build the set of magazine fulltypes + ammo fulltypes the carried guns need.
+local function buildWanted(player)
+    local wantMag, wantAmmo = {}, {}
+    local sm = getScriptManager and getScriptManager() or nil
+
+    local function addGun(item)
+        if not isGunItem(item) then return end
+        local mt = nil
+        pcall(function() mt = item:getMagazineType() end)
+        if mt and mt ~= "" then
+            wantMag[mt] = true
+            -- resolve which rounds that mag holds, so we grab the right ammo even when
+            -- you don't currently carry one of those mags
+            if sm then
+                pcall(function()
+                    local script = sm:getItem(mt)
+                    if script then
+                        local at = script:getAmmoType()
+                        if at and at ~= "" then wantAmmo[at] = true end
+                    end
+                end)
+            end
+        end
+        -- loose rounds the gun chambers directly (revolvers / shotguns / no-mag guns)
+        local at = nil
+        pcall(function() at = item:getAmmoType() end)
+        if at and at ~= "" then wantAmmo[at] = true end
+    end
+
+    local function scan(cont)
+        if not cont then return end
+        local items = nil
+        pcall(function() items = cont:getItems() end)
+        if not items then return end
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            if isGunItem(it) then
+                addGun(it)
+            else
+                -- a magazine you already carry tells us its caliber + that you want more
+                local at = safeAmmoType(it)
+                if at and at ~= "" then
+                    wantAmmo[at] = true
+                    local ft = safeFullType(it)
+                    if ft then wantMag[ft] = true end
+                end
+            end
+        end
+    end
+
+    pcall(function() scan(player:getInventory()) end)
+    pcall(function() local h = player:getPrimaryHandItem();   if h then addGun(h) end end)
+    pcall(function() local h = player:getSecondaryHandItem(); if h then addGun(h) end end)
+
+    return wantMag, wantAmmo
+end
+
+local function isWanted(item, wantMag, wantAmmo)
+    if isGunItem(item) then return false end          -- never auto-grab guns
+    local ft = safeFullType(item)
+    if ft and wantMag[ft] then return true end          -- a magazine type our guns use
+    if ft and wantAmmo[ft] then return true end          -- loose rounds our guns/mags use
+    local at = safeAmmoType(item)                        -- a mag of a wanted caliber
+    if at and at ~= "" and wantAmmo[at] then return true end
+    return false
+end
+
+local function gather(player)
+    player = getPlayerObj(player)
+    if not player then return end
+
+    local wantMag, wantAmmo = buildWanted(player)
+    local any = false
+    for _ in pairs(wantMag)  do any = true; break end
+    if not any then for _ in pairs(wantAmmo) do any = true; break end end
+    if not any then
+        HaloTextHelper.addText(player, "No firearms on you to gather for", HaloTextHelper.getColorRed())
+        return
+    end
+
+    local sq = player:getCurrentSquare()
+    if not sq then return end
+    local cell = getCell()
+    if not cell then return end
+    local px, py, pz = sq:getX(), sq:getY(), sq:getZ()
+    local playerInv = player:getInventory()
+    local moved, seen = 0, {}
+
+    for x = px - RADIUS, px + RADIUS do
+        for y = py - RADIUS, py + RADIUS do
+            local s = cell:getGridSquare(x, y, pz)
+            if s then
+                local objs = s:getObjects()
+                for i = 0, objs:size() - 1 do
+                    local obj = objs:get(i)
+                    local cont = nil
+                    pcall(function() cont = obj:getContainer() end)
+                    -- respect the sorter's container exclusions (e.g. the ISA solar box)
+                    local skip = false
+                    if cont and EmpireSortConfig then
+                        local ct = nil
+                        pcall(function() ct = cont:getType() end)
+                        if ct and EmpireSortConfig.isExcludedContainer(ct) then skip = true end
+                    end
+                    if cont and not skip and not seen[cont] then
+                        seen[cont] = true
+                        local items = nil
+                        pcall(function() items = cont:getItems() end)
+                        if items then
+                            local snap = {}
+                            for j = 0, items:size() - 1 do snap[#snap+1] = items:get(j) end
+                            for _, it in ipairs(snap) do
+                                if isWanted(it, wantMag, wantAmmo) then
+                                    local ok = pcall(function() playerInv:addItem(it); cont:Remove(it) end)
+                                    if ok then moved = moved + 1 end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if moved > 0 then
+        HaloTextHelper.addText(player, "Gathered " .. moved .. " mags/rounds", HaloTextHelper.getColorGreen())
+        player:Say("Pulled " .. moved .. " mags/rounds for my guns.")
+    else
+        HaloTextHelper.addText(player, "No matching ammo/mags nearby", HaloTextHelper.getColorWhite())
+    end
+end
+
+-- ---- right-click inventory option (shown when you click a gun / mag / ammo) ----
+local function entryItem(entry)
+    if entry == nil then return nil end
+    local ok = false
+    pcall(function() ok = instanceof(entry, "InventoryItem") end)
+    if ok then return entry end
+    local it = nil
+    pcall(function() if entry.items then it = entry.items:get(0) end end)        -- ArrayList form
+    if not it then pcall(function() if entry.items and entry.items[1] then it = entry.items[1] end end) end -- table form
+    return it
+end
+
+local function relevant(items)
+    for _, e in ipairs(items) do
+        local it = entryItem(e)
+        if it then
+            if isGunItem(it) then return true end
+            local at = safeAmmoType(it)
+            if at and at ~= "" then return true end
+            -- loose ammo (Ammo class)
+            local isAmmo = false
+            pcall(function() isAmmo = instanceof(it, "Ammo") end)
+            if isAmmo then return true end
+        end
+    end
+    return false
+end
+
+local function onFillInv(player, context, items)
+    local playerObj = getPlayerObj(player)
+    if not playerObj then return end
+    if not relevant(items) then return end
+    context:addOption("Empire: Gather ammo & mags (nearby)", playerObj, gather)
+end
+Events.OnFillInventoryObjectContextMenu.Add(onFillInv)
+
+print("[EmpireQoL] Ammo Run loaded (right-click a gun/mag -> gather ammo & mags from nearby storage).")

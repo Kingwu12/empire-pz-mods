@@ -1,0 +1,98 @@
+-- Empire NPC - Role Tags + Auto-Work
+-- Two jobs:
+--  (1) AUTO-WORK: every base (non-following) survivor with no job role gets SSC's "Worker"
+--      role, so SSC's own AI-Manager auto-assigns them real base tasks (forage, sort, guard
+--      area, gather wood) when idle at base -- instead of standing around. Only fills EMPTY
+--      roles, so anyone you've assigned by hand (Doctor, etc.) is left alone.
+--  (2) VISIBILITY: floats each base survivor's role above their head every few seconds so you
+--      can actually SEE who's a Guard/Worker and whether they're armed. Press F11 to toggle.
+
+require "EmpireNPC_Shared"
+
+local TAG_MS  = 5000     -- how often role tags flash
+local WORK_MS = 20000    -- how often we (re)assert worker role on roleless base survivors
+local PANEL_KEY = Keyboard.KEY_F11
+local lastTag, lastWork = 0, 0
+local tagsOn = true
+
+local function workerRoleString()
+    local r = "Worker"
+    pcall(function() if Get_SS_JobText then r = Get_SS_JobText("Worker") end end)
+    return r
+end
+
+local function isFollowing(ss)
+    local m; pcall(function() m = ss:getAIMode() end)
+    return m == "Follow"
+end
+
+local function survChar(ss)
+    local ch = nil
+    pcall(function() ch = ss:Get() end)          -- SSC: :Get() returns the IsoPlayer
+    if not ch then pcall(function() ch = ss.player end) end
+    return ch
+end
+
+local function roleColor(role)
+    if role == "Guard"  then return HaloTextHelper.getColorRed() end
+    if role == "Medic"  then return HaloTextHelper.getColorGreen() end
+    if role == "Farmer" then return HaloTextHelper.getColorGreen() end
+    if role == "Looter" then return HaloTextHelper.getColorYellow() end
+    if role == "Warden" then return HaloTextHelper.getColorWhite() end
+    return HaloTextHelper.getColorWhite()
+end
+
+local function tick()
+    local p = getSpecificPlayer(0); if not p then return end
+    local now = getTimestampMs()
+    local survs = (EmpireNPC.getActiveSurvivors and EmpireNPC.getActiveSurvivors()) or {}
+
+    -- (1) auto-work: roleless base survivors -> SSC Worker
+    if now - lastWork >= WORK_MS then
+        lastWork = now
+        local wr = workerRoleString()
+        for _, ss in ipairs(survs) do
+            if not isFollowing(ss) then
+                pcall(function()
+                    local cur = ss:getGroupRole()
+                    if cur == nil or cur == "" then ss:setGroupRole(wr) end
+                end)
+            end
+        end
+    end
+
+    -- (2) visibility: flash role above each survivor's head
+    if tagsOn and now - lastTag >= TAG_MS then
+        lastTag = now
+        for _, ss in ipairs(survs) do
+            pcall(function()
+                local ch = survChar(ss)
+                if not ch or ch:isDead() then return end
+                local name = ss:getName() or "?"
+                local settler = EmpireNPC.getSettler and EmpireNPC.getSettler(name) or nil
+                local role = (settler and settler.role) or nil
+                if not role or role == "" then
+                    pcall(function() role = ss:getGroupRole() end)
+                end
+                if not role or role == "" then role = "Settler" end
+                local armed = false
+                pcall(function() if ss.getGunWep and ss:getGunWep() then armed = true end end)
+                local txt = role .. (armed and " [armed]" or "")
+                HaloTextHelper.addText(ch, txt, roleColor(role))
+            end)
+        end
+    end
+end
+
+Events.OnPlayerUpdate.Add(function() pcall(tick) end)
+
+Events.OnKeyPressed.Add(function(key)
+    if key == PANEL_KEY then
+        tagsOn = not tagsOn
+        local p = getSpecificPlayer(0)
+        if p then HaloTextHelper.addText(p, tagsOn and "Role tags ON" or "Role tags OFF",
+            HaloTextHelper.getColorWhite()) end
+    end
+end)
+
+print("[EmpireNPC] Role Tags + Auto-Work loaded. Base survivors auto-work (SSC Worker); roles float overhead (F11 to toggle).")

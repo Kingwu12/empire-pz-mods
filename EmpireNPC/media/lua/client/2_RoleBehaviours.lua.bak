@@ -1,0 +1,143 @@
+-- Empire NPC - Role Behaviours FIXED
+-- Uses SSM.SuperSurvivors correctly, all calls wrapped in pcall
+
+local ROLE_TICK = 600
+local roleTick = 0
+local GUARD_RADIUS = 20
+local WARDEN_INTERVAL = 3
+local wardenCycle = 0
+
+local function runGuardBehaviour(ss, settler)
+    local char = ss:Get()
+    if not char or char:isDead() then return end
+
+    local post = settler.guardPost
+    if post then
+        local dx = char:getX() - post.x
+        local dy = char:getY() - post.y
+        if math.sqrt(dx*dx + dy*dy) > 8 then
+            char:setX(post.x)
+            char:setY(post.y)
+            char:setZ(post.z)
+        end
+    end
+
+    local px = math.floor(char:getX())
+    local py = math.floor(char:getY())
+    local pz = math.floor(char:getZ())
+    local threat = false
+
+    for x = px - GUARD_RADIUS, px + GUARD_RADIUS do
+        for y = py - GUARD_RADIUS, py + GUARD_RADIUS do
+            local sq = getCell():getGridSquare(x, y, pz)
+            if sq then
+                local objs = sq:getObjects()
+                for i = 0, objs:size() - 1 do
+                    if instanceof(objs:get(i), "IsoZombie") then
+                        threat = true; break
+                    end
+                end
+            end
+            if threat then break end
+        end
+        if threat then break end
+    end
+
+    EmpireNPC.stats.threatLevel = threat and 1 or 0
+
+    if ss.setAIMode then
+        if threat then
+            ss:setAIMode("Attack")
+        else
+            ss:setAIMode("StandGround")
+        end
+    end
+end
+
+local function runWardenBehaviour(ss, settler)
+    wardenCycle = wardenCycle + 1
+    if wardenCycle < WARDEN_INTERVAL then return end
+    wardenCycle = 0
+
+    local player = getSpecificPlayer(0)
+    if not player then return end
+
+    local char = ss:Get()
+    if not char then return end
+
+    local dist = math.sqrt((char:getX()-player:getX())^2 + (char:getY()-player:getY())^2)
+    if dist < 30 and EmpireSortAll and type(EmpireSortAll.doSortAll) == "function" then
+        pcall(EmpireSortAll.doSortAll, player)
+        HaloTextHelper.addText(player,
+            (settler.name or "Warden") .. " sorted storage",
+            HaloTextHelper.getColorGreen())
+    end
+end
+
+local function runFarmerBehaviour(ss, settler)
+    local char = ss:Get()
+    if not char then return end
+    local px = math.floor(char:getX())
+    local py = math.floor(char:getY())
+    local pz = math.floor(char:getZ())
+    local farmed = 0
+
+    for x = px-10, px+10 do
+        for y = py-10, py+10 do
+            local sq = getCell():getGridSquare(x, y, pz)
+            if sq then
+                local objs = sq:getObjects()
+                for i = 0, objs:size()-1 do
+                    local obj = objs:get(i)
+                    if obj and instanceof(obj, "IsoCrop") then
+                        if obj:getWater() < 30 then
+                            obj:addWater(40); farmed = farmed + 1
+                        end
+                        if obj:isReadyToHarvest() then
+                            obj:harvest(getSpecificPlayer(0)); farmed = farmed + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if farmed > 0 then
+        local p = getSpecificPlayer(0)
+        if p then HaloTextHelper.addText(p, (settler.name or "Farmer") .. " tended " .. farmed .. " crops", HaloTextHelper.getColorGreen()) end
+    end
+end
+
+local function runRoleBehaviours()
+    if not SSM or not SSM.SuperSurvivors then return end
+    local count = SSM.SurvivorCount or 0
+
+    for i = 0, count + 1 do
+        local ss = SSM.SuperSurvivors[i]
+        if ss and not ss:isDead() then
+            local name = ss:getName() or ""
+            if name ~= "" then
+                local settler = EmpireNPC.getSettler(name)
+                settler.name = name
+                local role = settler.role or EmpireNPC.Roles.NONE
+                if role == EmpireNPC.Roles.GUARD then
+                    pcall(runGuardBehaviour, ss, settler)
+                elseif role == EmpireNPC.Roles.WARDEN then
+                    pcall(runWardenBehaviour, ss, settler)
+                elseif role == EmpireNPC.Roles.FARMER then
+                    pcall(runFarmerBehaviour, ss, settler)
+                end
+            end
+        end
+    end
+end
+
+local function onTick()
+    roleTick = roleTick + 1
+    if roleTick < ROLE_TICK then return end
+    roleTick = 0
+    pcall(runRoleBehaviours)
+end
+
+Events.OnTick.Add(onTick)
+print("[EmpireNPC] Role Behaviours loaded.")

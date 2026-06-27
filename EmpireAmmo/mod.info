@@ -1,0 +1,4 @@
+name=Empire Ammo (Lean Reload)
+id=EmpireAmmo
+description=Low-item-volume ammo crafting. Every round loads straight from lead + brass + powder + primer with no per-caliber pellet/casing/hull intermediate items. Overrides ammo_smelting + GunFighter assembly recipes. LOAD AFTER both of those mods.
+modversion=1.0

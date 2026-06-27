@@ -1,0 +1,43 @@
+-- Empire QoL :: 99_CtxProfiler.lua -- TEMP DIAGNOSTIC (delete once we know the culprit).
+-- The world right-click still lags even though building moved to the button. This times
+-- two things on every real right-click and prints to console:
+--   1. TOTAL = the whole menu build (vanilla object scan + every mod's handler)
+--   2. SuperbSurvivors' handler specifically (your prime suspect)
+-- Compare the two: if SuperbSurvivors ~= TOTAL, survivors is it. If it's small but TOTAL
+-- is big, the cost is vanilla's object scan or another mod, and we look there next.
+
+local function install()
+    -- 1) total cost of the whole right-click menu
+    if ISWorldObjectContextMenu and ISWorldObjectContextMenu.createMenu then
+        local orig = ISWorldObjectContextMenu.createMenu
+        ISWorldObjectContextMenu.createMenu = function(player, worldobjects, x, y, test)
+            if test then return orig(player, worldobjects, x, y, test) end
+            local n = (type(worldobjects) == "table" and #worldobjects) or -1
+            local t0 = getTimestampMs()
+            local ctx = orig(player, worldobjects, x, y, test)
+            local dt = getTimestampMs() - t0
+            print("[CtxProf] right-click menu TOTAL = " .. dt .. " ms   (objects on tile: " .. n .. ")")
+            return ctx
+        end
+    end
+
+    -- 2) SuperbSurvivors' handler specifically: swap its registration for a timed wrapper
+    if SurvivorsFillWorldObjectContextMenu and Events and Events.OnFillWorldObjectContextMenu then
+        local sscFn = SurvivorsFillWorldObjectContextMenu
+        pcall(function() Events.OnFillWorldObjectContextMenu.Remove(sscFn) end)
+        Events.OnFillWorldObjectContextMenu.Add(function(player, context, worldobjects, test)
+            if test then return sscFn(player, context, worldobjects, test) end
+            local t0 = getTimestampMs()
+            sscFn(player, context, worldobjects, test)
+            local dt = getTimestampMs() - t0
+            print("[CtxProf]    -> SuperbSurvivors handler = " .. dt .. " ms")
+        end)
+        print("[CtxProf] SuperbSurvivors handler is being timed.")
+    else
+        print("[CtxProf] SuperbSurvivors handler NOT found -- so the lag is NOT the survivors right-click handler.")
+    end
+
+    print("[CtxProf] armed. Right-click in the world a few times (esp. where it lags), then check console.")
+end
+
+Events.OnGameStart.Add(install)

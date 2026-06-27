@@ -1,0 +1,336 @@
+module Base
+{
+	imports
+	{
+		Smelting
+	}
+
+	/* ===================================================================
+	   EMPIRE AMMO - lean low-item-volume reload overrides.
+	   Every round is pressed straight from the universal lead + brass
+	   currency (Smelting.projectilelead / Smelting.projectilebrass) plus
+	   1 powder + 1 primer. No per-caliber Lead##/Brass##/Hull## pellet,
+	   casing or hull ITEMS in the path -> a fraction of the item churn.
+	   One craft yields a stack of 10. Change the "=10" to tune yield.
+	   These override the same-named recipes in ammo_smelting + GunFighter,
+	   so this mod MUST load AFTER both of them.
+	   =================================================================== */
+
+	/* ---------- PISTOL / SMG ---------- */
+	recipe Make 5.7x28mm Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSM = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.Bullets57=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 380-ACP Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSM = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.Bullets380=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 9mm Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSM = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.Bullets9mm=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 38-SPC Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSM = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.Bullets38=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 357-MAG Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSM = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.Bullets357=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 45-ACP Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSM = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.Bullets45=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 45-LC Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSM = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.Bullets45LC=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 44-MAG Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSM = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.Bullets44=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 50-MAG Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerLG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.Bullets50MAG=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+
+	/* ---------- RIFLE ---------- */
+	recipe Make 45-70 GOV Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerLG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.Bullets4570=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 223-REM Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSM = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.223Bullets=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 5.56x45mm Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSM = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.556Bullets=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 5.45x39mm Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerLG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.545x39Bullets=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 7.62x39mm Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerLG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.762x39Bullets=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 308-WIN Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerLG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.308Bullets=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 7.62x51mm Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerLG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.762x51Bullets=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 7.62x54mm-R Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerLG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.762x54rBullets=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 30-06 SPG Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerLG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.3006Bullets=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 50-BMG Ammunition
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerLG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.50BMGBullets=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+
+	/* ---------- SHOTGUN (brass = hull, lead = shot charge) ---------- */
+	recipe Make 410g ShotShell
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.410gShotgunShells=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 20g ShotShell
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.20gShotgunShells=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 12g ShotShell
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.ShotgunShells=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 10g ShotShell
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.10gShotgunShells=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+	recipe Make 4g ShotShell
+	{
+		Smelting.projectilelead = 1,
+		Smelting.projectilebrass = 1,
+		GunPowder = 1,
+		PrimerSG = 1,
+		keep Lyman_TMag/Lee_LoadMaster,
+		Sound : Reloading_Press,
+		Result : Base.4gShotgunShells=10,
+		Time : 30.0,
+		CanBeDoneFromFloor : TRUE,
+		NeedToBeLearn : true,
+	}
+}

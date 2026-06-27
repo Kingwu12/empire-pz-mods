@@ -1,0 +1,151 @@
+-- EmpireQoL :: 32_BuildFromBase.lua -- build straight from your base (cache-backed)
+-- Building consumes materials through ONE chokepoint: buildUtil.consumeMaterial(ISItem),
+-- called inside every buildable's create(). It reads need:<FullType>/use:<FullType> from the
+-- build's modData and pulls those items from the PLAYER INVENTORY (+ a 3x3 ground fallback).
+--
+-- We wrap that chokepoint: right BEFORE vanilla consumes, we move any shortfall of the needed
+-- items from your base containers (via EmpireBaseCache) into your inventory. Vanilla then does
+-- the actual consume from inventory as normal. We only ever MOVE real item instances (remove
+-- from the base container, then add to inventory) -- the same Remove() call vanilla itself uses
+-- -- so nothing is ever copied and nothing can dupe. If the cache is empty / you're not in a
+-- base, we move nothing and vanilla behaves exactly as before.
+
+-- Move one real item instance from wherever it lives into the player's inventory. Remove first,
+-- then add: even in the worst case this nets exactly one item moved (never a dupe).
+local function moveToInv(item, playerInv)
+    local from = nil
+    pcall(function() from = item:getContainer() end)
+    if not from then return false end
+    if from == playerInv then return true end
+    local ok = pcall(function()
+        from:Remove(item)
+        playerInv:addItem(item)
+    end)
+    return ok
+end
+
+-- Pull up to `count` items of fullType from base containers into inventory. For need:, we honour
+-- buildUtil.predicateMaterial (skip non-empty bags) so we never yank a loaded backpack as if it
+-- were a raw material. Returns how many we actually moved.
+local function pullNeedFromBase(fullType, count, playerInv)
+    if count <= 0 then return 0 end
+    local cache = nil
+    if EmpireBaseCache and EmpireBaseCache.get then pcall(function() cache = EmpireBaseCache.get() end) end
+    if not cache or not cache.containers then return 0 end
+    local moved = 0
+    for _, c in ipairs(cache.containers) do
+        if moved >= count then break end
+        if c ~= playerInv then
+            local items = nil
+            pcall(function() items = c:getItems() end)
+            if items then
+                local matches = {}
+                for i = 0, items:size() - 1 do
+                    local it = items:get(i)
+                    local ft = nil
+                    pcall(function() ft = it:getFullType() end)
+                    if ft == fullType then
+                        local ok = true
+                        pcall(function() ok = buildUtil.predicateMaterial(it) end)
+                        if ok then matches[#matches + 1] = it end
+                    end
+                end
+                for _, it in ipairs(matches) do
+                    if moved >= count then break end
+                    if moveToInv(it, playerInv) then moved = moved + 1 end
+                end
+            end
+        end
+    end
+    if moved > 0 and EmpireBaseCache and EmpireBaseCache.invalidate then pcall(EmpireBaseCache.invalidate) end
+    return moved
+end
+
+-- Drainables (use:<FullType> = N uses, e.g. glue/paint). Move whole drainable items of that
+-- type from base into inventory until we've gathered at least `usesNeeded` total uses. Vanilla
+-- then drains what it needs; any surplus just sits in your bag (no dupe, no loss).
+local function pullUseFromBase(fullType, usesNeeded, playerInv)
+    if usesNeeded <= 0 then return end
+    local cache = nil
+    if EmpireBaseCache and EmpireBaseCache.get then pcall(function() cache = EmpireBaseCache.get() end) end
+    if not cache or not cache.containers then return end
+    local got = 0
+    for _, c in ipairs(cache.containers) do
+        if got >= usesNeeded then break end
+        if c ~= playerInv then
+            local items = nil
+            pcall(function() items = c:getItems() end)
+            if items then
+                local matches = {}
+                for i = 0, items:size() - 1 do
+                    local it = items:get(i)
+                    local ft = nil
+                    pcall(function() ft = it:getFullType() end)
+                    if ft == fullType then matches[#matches + 1] = it end
+                end
+                for _, it in ipairs(matches) do
+                    if got >= usesNeeded then break end
+                    local u = 0
+                    pcall(function() u = it:getDrainableUsesInt() end)
+                    if (u or 0) > 0 and moveToInv(it, playerInv) then got = got + u end
+                end
+            end
+        end
+    end
+    if got > 0 and EmpireBaseCache and EmpireBaseCache.invalidate then pcall(EmpireBaseCache.invalidate) end
+end
+
+-- How many matching items are already in the player's inventory (recursive, honouring the same
+-- material predicate vanilla uses for need:).
+local function invHaveNeed(playerInv, fullType)
+    local n = 0
+    pcall(function()
+        local got = playerInv:getSomeTypeEvalRecurse(fullType, buildUtil.predicateMaterial, 1000000)
+        n = got and got:size() or 0
+    end)
+    return n
+end
+
+local function invHaveUses(playerInv, fullType)
+    local uses = 0
+    pcall(function()
+        local got = playerInv:getAllTypeRecurse(fullType)
+        for i = 1, got:size() do
+            local u = 0
+            pcall(function() u = got:get(i - 1):getDrainableUsesInt() end)
+            uses = uses + (u or 0)
+        end
+    end)
+    return uses
+end
+
+-- Move every shortfall the build needs from the base into inventory, THEN let vanilla consume.
+local function prefetch(ISItem)
+    if not (ISItem and ISItem.modData and ISItem.player) then return end
+    if ISBuildMenu and ISBuildMenu.cheat then return end
+    local playerObj = getSpecificPlayer(ISItem.player)
+    if not playerObj then return end
+    local playerInv = playerObj:getInventory()
+    for index, value in pairs(ISItem.modData) do
+        if luautils.stringStarts(index, "need:") then
+            local fullType = luautils.split(index, ":")[2]
+            local short = (tonumber(value) or 0) - invHaveNeed(playerInv, fullType)
+            if short > 0 then pullNeedFromBase(fullType, short, playerInv) end
+        elseif luautils.stringStarts(index, "use:") then
+            local fullType = luautils.split(index, ":")[2]
+            local short = (tonumber(value) or 0) - invHaveUses(playerInv, fullType)
+            if short > 0 then pullUseFromBase(fullType, short, playerInv) end
+        end
+    end
+end
+
+local function install()
+    -- DISABLED: fully superseded by 15_SmartBuild v5, which wraps the same
+    -- buildUtil.consumeMaterial chokepoint and pulls build materials from the WHOLE base
+    -- (plus worn bags/trolley, with a cached menu scan). Running BOTH stacked two extra
+    -- full-base scans onto every single placement -- a big part of the wait between
+    -- consecutive builds. Left as a no-op so load order / file presence is unchanged.
+    print("[EmpireQoL] Build From Base: disabled (handled by Smart Build v5).")
+end
+
+Events.OnGameStart.Add(install)

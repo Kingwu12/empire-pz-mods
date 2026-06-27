@@ -1,0 +1,83 @@
+-- Empire QoL :: 24_SmartCraft.lua -- craft straight from your base -- v2 (cache-backed)
+-- Vanilla/FixLaggy ISCraftingUI:getContainers() only gathers your worn bags + open loot
+-- windows, so the Crafting panel can't see your base unless you open every shelf. This wraps
+-- it to ALSO add every container in the base you're standing in -- read straight from
+-- EmpireBaseCache (the shared, on-demand base index).
+--
+-- v2 change: NO more live world sweep per craft-window refresh. The old version re-scanned a
+-- tile box every time the panel ticked, which recalculated constantly and caused lag. Now we
+-- just hand the panel the cache's container list. The cache scans once and reuses it until
+-- something changes, so the recalculation lag is gone. RecipeManager still reads/consumes from
+-- the REAL containers we hand it, so ingredient counts are always live-accurate and nothing dupes.
+--
+-- Safe with ProximityInventory: its CraftingFix only REMOVES the synthetic proxInv container;
+-- we only ever add REAL world containers (from the cache) and dedup by identity, so nothing dupes.
+
+-- - Focus Craft toggle -------------------------------------------------------
+-- Whole-base crafting is the default. But crafting AMMO from the whole base means the
+-- engine counts every item in the base for each round -> FPS death. Flip Focus ON and
+-- crafting only sees your inventory + the container you have OPEN, so it's fast. Open your
+-- ammo-components bin, flip ON, mass-craft, flip OFF for normal whole-base convenience.
+-- Default key: \  (backslash). Also callable from console: EmpireSmartCraft.toggleFocus()
+EmpireSmartCraft = EmpireSmartCraft or {}
+if EmpireSmartCraft.focus == nil then EmpireSmartCraft.focus = false end
+
+function EmpireSmartCraft.toggleFocus()
+    EmpireSmartCraft.focus = not EmpireSmartCraft.focus
+    local on = EmpireSmartCraft.focus
+    local msg = on and "FOCUS CRAFT: ON  (open container only)" or "FOCUS CRAFT: OFF  (whole base)"
+    local p = getSpecificPlayer(0)
+    if p then
+        if HaloTextHelper and HaloTextHelper.addText then
+            HaloTextHelper.addText(p, msg)
+        else
+            p:Say(msg)
+        end
+    end
+    print("[EmpireQoL] " .. msg)
+end
+
+local FOCUS_KEY = (Keyboard and Keyboard.KEY_BACKSLASH) or 43
+Events.OnKeyPressed.Add(function(key)
+    if key == FOCUS_KEY then EmpireSmartCraft.toggleFocus() end
+end)
+
+-- Every container in the base you're standing in, straight from the shared cache. Empty list
+-- when you're not in a registered base -> we add nothing and vanilla inventory rules apply.
+local function baseContainers()
+    local c = nil
+    if EmpireBaseCache and EmpireBaseCache.get then
+        pcall(function() c = EmpireBaseCache.get() end)
+    end
+    return (c and c.containers) or {}
+end
+
+local function install()
+    if not ISCraftingUI or not ISCraftingUI.getContainers then
+        print("[EmpireQoL] Smart Craft: ISCraftingUI missing, not hooked.")
+        return
+    end
+    -- orig is already the ProximityInventory/CraftingFix-wrapped getContainers, so calling it
+    -- keeps their proxInv removal intact; we just append the base containers afterward.
+    local orig = ISCraftingUI.getContainers
+    ISCraftingUI.getContainers = function(self)
+        local ret = orig(self)
+        if not EmpireSmartCraft.focus then
+            pcall(function()
+                if not self.character or not self.containerList then return end
+                local present = {}
+                for i = 0, self.containerList:size() - 1 do present[self.containerList:get(i)] = true end
+                for _, c in ipairs(baseContainers()) do
+                    if c and not present[c] then
+                        self.containerList:add(c)
+                        present[c] = true
+                    end
+                end
+            end)
+        end
+        return ret
+    end
+    print("[EmpireQoL] Smart Craft v2 loaded. Whole-base crafting ON; press \\ (backslash) to toggle Focus Craft = open-container-only (fast ammo crafting).")
+end
+
+Events.OnGameStart.Add(install)

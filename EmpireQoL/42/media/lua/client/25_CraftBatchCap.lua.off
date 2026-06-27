@@ -1,0 +1,8 @@
+-- Empire QoL - Instant Batch Craft -- DISABLED (superseded by 33_CraftN.lua v2)
+-- This used to override ISCraftingUI:craftAll, but it fought 33_CraftN for control of the
+-- craft buttons and never actually reached them. 33_CraftN.lua now owns instant batch +
+-- Craft N as a single authority. Left as a no-op so nothing else changes.
+local function install()
+    print("[EmpireQoL] Instant Batch Craft: disabled (handled by Craft N v2).")
+end
+Events.OnGameStart.Add(install)

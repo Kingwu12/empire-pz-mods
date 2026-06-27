@@ -1,0 +1,3 @@
+name=Empire RF Gun Fix
+id=EmpireRFGunFix
+description=Registers RF_AR15SAIGRY and RF_G36K so they stop spamming. Requires RealFirearms.

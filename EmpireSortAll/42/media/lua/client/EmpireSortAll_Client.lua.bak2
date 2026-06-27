@@ -1,0 +1,337 @@
+-- ============================================================
+-- Empire Smart Sort  (universal, multi-floor)
+-- F9 or right-click inventory -> "Smart Sort Base"
+-- Scans every container within RADIUS tiles ON EVERY FLOOR, gives
+-- EVERY item category a home container (even if nothing is organised
+-- yet), then relocates misplaced items and empties loose loot from the
+-- player's inventory into those homes. Works on containers directly, so
+-- it ignores the manual loot-reach limit and reaches all base storage.
+-- ============================================================
+
+local RADIUS = 10
+
+local DRY_FOOD = {
+    TinnedBeans=true, TinnedSardines=true, TinnedCorn=true, TinnedPeas=true,
+    CannedCorn=true, CannedPeas=true, CannedTomato=true, CannedBolognese=true,
+    CannedChili=true, CannedCarrots=true, CannedMushroomSoup=true,
+    TinnedSoup=true, CornedBeef=true, TunaTin=true, Dogfood=true,
+    Rice=true, RiceUncooked=true, Pasta=true, PastaUncooked=true,
+    Crackers=true, Chips=true, Crisps=true, Sugar=true, Flour=true,
+    Cereal=true, Coffee=true, Honey=true, Salt=true, Pop=true,
+    CandyPackage=true, BeefJerky=true, Twiggies=true,
+}
+
+-- Every category we hand a home to (Perishable is handled via fridge/freezer).
+local CATEGORIES = {
+    "DryFood", "Gun", "Weapon", "Ammo", "Medical", "Tools",
+    "Materials", "Books", "Clothing", "Bags", "Misc",
+}
+
+local function categoryOf(item)
+    local result = "Misc"
+    pcall(function()
+        if not item then return end
+        local t = item:getType() or ""
+        if instanceof(item, "Food") then
+            if DRY_FOOD[t] then result = "DryFood"; return end
+            local off = 0
+            pcall(function() off = item:getOffAgeMax() or 0 end)
+            if off > 200000 then result = "DryFood" else result = "Perishable" end
+            return
+        end
+        if instanceof(item, "Clothing") then result = "Clothing"; return end
+        if instanceof(item, "Ammo") then result = "Ammo"; return end
+        if instanceof(item, "HandWeapon") then
+            local ranged = false
+            pcall(function() ranged = item:isRanged() end)
+            if ranged then result = "Gun" else result = "Weapon" end
+            return
+        end
+        local cat = item:getCategory() or "Misc"
+        if cat == "Weapon" then result = "Weapon"
+        elseif cat == "Ammo" then result = "Ammo"
+        elseif cat == "Literature" then result = "Books"
+        elseif cat == "Medical" or cat == "FirstAid" then result = "Medical"
+        elseif cat == "Tool" or cat == "Tools" then result = "Tools"
+        elseif cat == "Material" or cat == "Materials" then result = "Materials"
+        elseif cat == "Container" then result = "Bags"
+        else result = "Misc" end
+    end)
+    return result
+end
+
+local function containerType(cont)
+    local ctype = ""
+    pcall(function() ctype = cont:getType() or "" end)
+    return ctype
+end
+
+-- A container counts as cold storage if its type is fridge/freezer, the commercial
+-- ice-cream freezer, or any modded type whose name contains those words. (Display
+-- cases are deliberately left out -- not all of them actually refrigerate food.)
+local function isFreezer(ct)
+    ct = (ct or ""):lower()
+    return ct == "freezer" or ct == "icecream" or ct:find("freezer", 1, true) ~= nil
+end
+local function isFridge(ct)
+    ct = (ct or ""):lower()
+    return ct == "fridge" or ct:find("fridge", 1, true) ~= nil
+end
+
+-- Live majority category of a container's current contents (used to honour
+-- storage that is already organised so we don't shuffle a tidy base around).
+local function majorityCategory(cont)
+    local ctype = containerType(cont)
+    if isFreezer(ctype) or isFridge(ctype) then return "Perishable" end
+    local counts = {}
+    local items = cont:getItems()
+    for i = 0, items:size() - 1 do
+        local k = categoryOf(items:get(i))
+        counts[k] = (counts[k] or 0) + 1
+    end
+    local best, bestN = nil, 0
+    for k, n in pairs(counts) do
+        if n > bestN then best, bestN = k, n end
+    end
+    return best
+end
+
+local function collectContainers(player)
+    local conts, seen = {}, {}
+    local sq = player:getCurrentSquare()
+    if not sq then return conts end
+    local cell = getCell()
+    local px, py = sq:getX(), sq:getY()
+    -- Scan EVERY floor (0-7) within the radius, not just the player's level, so
+    -- storage on another floor -- e.g. a fridge in an upstairs kitchen -- is reached.
+    for z = 0, 7 do
+        for x = px - RADIUS, px + RADIUS do
+            for y = py - RADIUS, py + RADIUS do
+                local s = cell:getGridSquare(x, y, z)
+                if s then
+                    local objs = s:getObjects()
+                    for i = 0, objs:size() - 1 do
+                        local obj = objs:get(i)
+                        local c = nil
+                        pcall(function() c = obj:getContainer() end)
+                        if c and not seen[c] then
+                            seen[c] = true
+                            conts[#conts+1] = c
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return conts
+end
+
+local function smartSort(player)
+    if not player then player = getSpecificPlayer(0) end
+    if not player then return end
+
+    local conts = collectContainers(player)
+    if #conts == 0 then
+        HaloTextHelper.addText(player, "No storage nearby to sort", HaloTextHelper.getColorRed())
+        player:Say("No storage close enough to sort.")
+        return
+    end
+
+    -- Reserve the first fridge + first freezer for perishables; everything else
+    -- (including any extra fridges/freezers) is general storage.
+    local fridge, freezer
+    local general = {}
+    for _, c in ipairs(conts) do
+        local ctype = containerType(c)
+        if isFreezer(ctype) then
+            if not freezer then freezer = c else general[#general+1] = c end
+        elseif isFridge(ctype) then
+            if not fridge then fridge = c else general[#general+1] = c end
+        else
+            general[#general+1] = c
+        end
+    end
+
+    -- ---- Give EVERY category a home container ----
+    local homes = {}
+    homes["Perishable"] = freezer or fridge
+
+    -- Pass 1: honour containers that are already mostly one category.
+    for _, c in ipairs(general) do
+        local h = majorityCategory(c)
+        if h and h ~= "Perishable" and not homes[h] then homes[h] = c end
+    end
+
+    -- Pass 2: assign each still-homeless category its own leftover container,
+    -- round-robin, so nothing gets orphaned just because the base wasn't organised.
+    local used = {}
+    for _, c in pairs(homes) do used[c] = true end
+    local leftover = {}
+    for _, c in ipairs(general) do if not used[c] then leftover[#leftover+1] = c end end
+    local li = 0
+    for _, cat in ipairs(CATEGORIES) do
+        if not homes[cat] then
+            if #leftover > 0 then
+                homes[cat] = leftover[(li % #leftover) + 1]
+                li = li + 1
+            else
+                homes[cat] = general[1]   -- last resort: share the first container
+            end
+        end
+    end
+    if not homes["Perishable"] then homes["Perishable"] = homes["DryFood"] or general[1] end
+
+    -- Reverse map: which categories each container is a home for (can be several).
+    local homeCats = {}
+    for cat, c in pairs(homes) do
+        if c then
+            homeCats[c] = homeCats[c] or {}
+            homeCats[c][cat] = true
+        end
+    end
+
+    -- Plan moves: any item not sitting in a container that is its category's home.
+    local moves = {}
+    for _, c in ipairs(conts) do
+        local atHome = homeCats[c] or {}
+        local items = c:getItems()
+        local snap = {}
+        for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
+        for _, it in ipairs(snap) do
+            local cat = categoryOf(it)
+            if not atHome[cat] then
+                local dest = homes[cat]
+                if dest and dest ~= c then
+                    moves[#moves+1] = { item = it, from = c, to = dest }
+                end
+            end
+        end
+    end
+
+    -- Empty loose loot the player is CARRYING -- main inventory AND worn bags --
+    -- into its homes. Recurse into bags (guarded) so a backpack of loot unloads too.
+    -- Skip equipped gear and clothing so we never strip the player, and skip the bag
+    -- items themselves so we empty bags without removing them.
+    local carried, seenC = {}, {}
+    local function addCarried(cont, depth)
+        if not cont or seenC[cont] or depth > 4 then return end
+        seenC[cont] = true
+        carried[#carried+1] = cont
+        local items = cont:getItems()
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            local sub = nil
+            pcall(function() sub = it:getInventory() end)   -- a bag's own container, or nil
+            if sub and sub ~= cont then addCarried(sub, depth + 1) end
+        end
+    end
+    addCarried(player:getInventory(), 0)
+
+    for _, cont in ipairs(carried) do
+        local items = cont:getItems()
+        local snap = {}
+        for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
+        for _, it in ipairs(snap) do
+            local equipped = false
+            pcall(function() if it:isEquipped() then equipped = true end end)
+            local cat = categoryOf(it)
+            if not equipped and cat ~= "Clothing" and cat ~= "Bags" then
+                local dest = homes[cat]
+                if dest and dest ~= cont then
+                    moves[#moves+1] = { item = it, from = cont, to = dest }
+                end
+            end
+        end
+    end
+
+    -- Apply moves, tallying by destination category. Respect each container's real
+    -- capacity (hasRoomFor) and type restrictions (isItemAllowed) -- the same checks
+    -- the engine uses for a manual transfer -- so we never overstuff past the limit.
+    local moved, overflow, touched, byCat = 0, 0, {}, {}
+    for _, mv in ipairs(moves) do
+        -- Snapshots can go stale after earlier moves; re-confirm the item is still here.
+        local stillThere = false
+        pcall(function() stillThere = mv.from:contains(mv.item) end)
+        if stillThere then
+            local fits = false
+            pcall(function()
+                fits = mv.to:isItemAllowed(mv.item) and mv.to:hasRoomFor(player, mv.item)
+            end)
+            if fits then
+                local ok = pcall(function()
+                    mv.to:addItem(mv.item)
+                    mv.from:Remove(mv.item)
+                end)
+                if ok then
+                    moved = moved + 1
+                    touched[mv.to] = true
+                    touched[mv.from] = true
+                    local cat = categoryOf(mv.item)
+                    byCat[cat] = (byCat[cat] or 0) + 1
+                end
+            else
+                -- Home is full or won't accept it: leave it put rather than overflow.
+                overflow = overflow + 1
+            end
+        end
+    end
+    local contN = 0
+    for c in pairs(touched) do contN = contN + 1; pcall(function() c:setDrawDirty(true) end) end
+
+    local LABELS = {
+        Perishable = "fridge", DryFood = "pantry", Gun = "guns", Weapon = "melee",
+        Ammo = "ammo", Medical = "meds", Tools = "tools",
+        Materials = "materials", Books = "books", Clothing = "clothing",
+        Bags = "bags", Misc = "misc",
+    }
+    local parts = {}
+    for cat, n in pairs(byCat) do
+        parts[#parts+1] = n .. " " .. (LABELS[cat] or cat)
+    end
+    local breakdown = table.concat(parts, ", ")
+
+    if moved > 0 then
+        HaloTextHelper.addText(player, "SORTED " .. moved .. " items -> " .. contN .. " containers",
+            HaloTextHelper.getColorGreen())
+        if breakdown ~= "" then
+            player:Say("Sorted: " .. breakdown .. ".")
+        else
+            player:Say("Sorted " .. moved .. " items. Everything in its place.")
+        end
+        if overflow > 0 then
+            HaloTextHelper.addText(player, overflow .. " left out - storage full",
+                HaloTextHelper.getColorRed())
+            player:Say(overflow .. " wouldn't fit. Need more storage.")
+        end
+    elseif overflow > 0 then
+        HaloTextHelper.addText(player, "Storage full - " .. overflow .. " items have nowhere to go",
+            HaloTextHelper.getColorRed())
+        player:Say("Storage's full. Nowhere to put " .. overflow .. " items.")
+    else
+        HaloTextHelper.addText(player, "Nothing to move - already sorted", HaloTextHelper.getColorWhite())
+        player:Say("Storage's already in order.")
+    end
+end
+
+-- Right-click inventory option
+local function onFillInventoryObjectContextMenu(player, context, items)
+    local playerObj = player
+    if type(player) == "number" then playerObj = getSpecificPlayer(player) end
+    if not playerObj then return end
+    context:addOption("Smart Sort Base", playerObj, smartSort)
+end
+Events.OnFillInventoryObjectContextMenu.Add(onFillInventoryObjectContextMenu)
+
+-- F9 keybind
+local SORT_KEY = Keyboard.KEY_F9
+local function onKeyPressed(key)
+    if key == SORT_KEY then
+        local player = getSpecificPlayer(0)
+        if player and not player:isDead() then
+            pcall(smartSort, player)
+        end
+    end
+end
+Events.OnKeyPressed.Add(onKeyPressed)
+
+print("[EmpireSortAll] Smart Sort loaded (multi-floor + cold storage). F9 or right-click -> Smart Sort Base.")

@@ -1,0 +1,121 @@
+-- Empire QoL - Auto Farm Tend
+-- When you're idle and safe NEAR your crops, your character tends them hands-free:
+-- harvests anything ripe, and waters anything dry from a water source in your inventory
+-- (watering can / bottle / etc.). One plant per cycle, so it walks the rows over time.
+-- No hotkey -- it only acts when there are crops within FARM_RANGE that need attention,
+-- so it stays dormant everywhere else. Watering needs a water source on you; if you've
+-- got none it just harvests and logs once.
+
+-- ===== CONFIG =====
+local FARM_RANGE  = 8     -- tiles around you to scan for crops
+local WATER_TO    = 75    -- water any growing plant whose water level is below this
+local CHECK_EVERY = 150   -- ticks between passes (~2.5s)
+-- ==================
+
+local tick = 0
+local noWaterSaid = false
+
+local function danger(player)
+    local s = player:getStats()
+    return s:getNumChasingZombies() > 0 or s:getNumVeryCloseZombies() > 0
+end
+local function busy(player)
+    return ISTimedActionQueue.isPlayerDoingAction(player)
+end
+
+-- a usable water source in the player's inventory (has water left)
+local function findWaterSource(player)
+    local inv = player:getInventory()
+    local items = inv:getItems()
+    for i = 0, items:size() - 1 do
+        local it = items:get(i)
+        local ok = false
+        pcall(function()
+            ok = it:isWaterSource() and math.floor(it:getUsedDelta() / it:getUseDelta()) > 0
+        end)
+        if ok then return it end
+    end
+    return nil
+end
+
+-- find the first plant near the player that needs harvesting or watering
+local function findPlantNeedingCare(player)
+    local cell = getCell()
+    if not cell then return nil end
+    local cx, cy, cz = math.floor(player:getX()), math.floor(player:getY()), player:getZ()
+    local sys = CFarmingSystem.instance
+    if not sys then return nil end
+    local bestWater = nil
+    for x = cx - FARM_RANGE, cx + FARM_RANGE do
+        for y = cy - FARM_RANGE, cy + FARM_RANGE do
+            local sq = cell:getGridSquare(x, y, cz)
+            if sq then
+                local plant = nil
+                pcall(function() plant = sys:getLuaObjectOnSquare(sq) end)
+                if plant then
+                    local canH = false
+                    pcall(function() canH = plant:canHarvest() end)
+                    if canH then
+                        return { plant = plant, sq = sq, action = "harvest" }   -- harvest first, always
+                    elseif plant.state == "seeded" and (plant.waterLvl or 100) < WATER_TO then
+                        if not bestWater then bestWater = { plant = plant, sq = sq, action = "water" } end
+                    end
+                end
+            end
+        end
+    end
+    return bestWater
+end
+
+local function tend(player)
+    if player:isDead() or player:isAsleep() then return end
+    if danger(player) or busy(player) then return end
+
+    local job = findPlantNeedingCare(player)
+    if not job then return end
+
+    if job.action == "harvest" then
+        if ISFarmingMenu.walkToPlant(player, job.sq) then
+            ISTimedActionQueue.add(ISHarvestPlantAction:new(player, job.plant, 100))
+        end
+        return
+    end
+
+    -- water: need a water source on us
+    local water = findWaterSource(player)
+    if not water then
+        if not noWaterSaid then
+            noWaterSaid = true
+            HaloTextHelper.addTextWithArrow(player, "Crops need water - carry a watering can", "[br/]", false, HaloTextHelper.getColorRed())
+        end
+        return
+    end
+    noWaterSaid = false
+
+    local use = 0
+    pcall(function() use = math.floor(water:getUsedDelta() / water:getUseDelta()) end)
+    local missing = math.ceil((100 - (job.plant.waterLvl or 0)) / 5)
+    if missing < use then use = missing end
+    if use > 20 then use = 20 end
+    if use < 1 then return end
+
+    if player:getPrimaryHandItem() ~= water then
+        ISTimedActionQueue.add(ISEquipWeaponAction:new(player, water, 50, true))
+    end
+    if ISFarmingMenu.walkToPlant(player, job.sq) then
+        ISTimedActionQueue.add(ISWaterPlantAction:new(player, water, use, job.sq, 20 + (6 * use)))
+    end
+end
+
+local function onTick()
+    tick = tick + 1
+    if tick < CHECK_EVERY then return end
+    tick = 0
+    local player = getSpecificPlayer(0)
+    if not player then return end
+    local ok, err = pcall(function() tend(player) end)
+    if not ok then print("[EmpireQoL ERROR] AutoFarm: " .. tostring(err)) end
+end
+Events.OnTick.Add(onTick)
+
+print("[EmpireQoL] Auto Farm loaded. Idle near crops = auto-water (from carried water) + auto-harvest.")

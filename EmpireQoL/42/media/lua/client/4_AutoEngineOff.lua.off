@@ -1,0 +1,38 @@
+-- Empire QoL - Auto Engine Off
+-- Turns the engine off automatically when you leave a vehicle with it running.
+-- No more leaving the M911 rumbling while you loot.
+--
+-- NOTE: the real 41.78 events are OnEnterVehicle / OnExitVehicle (NOT
+-- OnPlayerExitVehicle), and they pass only the character. On exit the player is
+-- already detached from the vehicle, so we remember the vehicle on entry and
+-- shut it off on exit. Engine API verified against the base game: isEngineRunning().
+
+local lastVehicle = {}
+
+local function isLocal(character)
+    return character and instanceof(character, "IsoPlayer") and character:isLocalPlayer()
+end
+
+local function onEnter(character)
+    if not isLocal(character) then return end
+    lastVehicle[character:getPlayerNum()] = character:getVehicle()
+end
+
+local function onExit(character)
+    if not isLocal(character) then return end
+    local pn = character:getPlayerNum()
+    local vehicle = lastVehicle[pn]
+    lastVehicle[pn] = nil
+    if not vehicle then return end
+    local wasRunning = false
+    pcall(function() wasRunning = vehicle:isEngineRunning() end)
+    if wasRunning then pcall(function() vehicle:shutOff() end) end
+    pcall(function() vehicle:setHeadlightsOn(false) end)   -- kill the lights so a parked car never drains the battery
+    if wasRunning then
+        HaloTextHelper.addTextWithArrow(character, "Engine off", "[br/]", false, HaloTextHelper.getColorWhite())
+    end
+end
+
+Events.OnEnterVehicle.Add(onEnter)
+Events.OnExitVehicle.Add(onExit)
+print("[EmpireQoL] Auto Engine Off loaded.")

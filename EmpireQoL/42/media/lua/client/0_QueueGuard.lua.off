@@ -1,0 +1,60 @@
+-- Empire QoL - Queue Guard (stops one bad action from wiping your whole action queue)
+-- THE root cause of "can't walk to far things / can't sleep": vanilla ISTimedActionQueue, the
+-- moment ANY queued action goes "bugged" (e.g. a glitchy weapon reload -- 377 of them in your
+-- last log), calls resetQueue() and WIPES THE ENTIRE QUEUE. So a background bugged reload
+-- deletes the walk-to-bed / walk-to-object you just told your character to do, and he just
+-- stands there. This replaces the two wipe points so a bugged action is DROPPED ON ITS OWN and
+-- the rest of the queue (your walk, your sleep, your build) keeps running.
+--
+-- Strictly less destructive than vanilla (which threw everything away), and it can't loop: each
+-- bad action is removed, then we advance -- draining bad actions until a good one runs.
+
+local function install()
+    if type(ISTimedActionQueue) ~= "table" then
+        print("[EmpireQoL] Queue Guard: ISTimedActionQueue missing, not hooked.")
+        return
+    end
+
+    -- advance past bugged heads instead of wiping the queue
+    function ISTimedActionQueue:onCompleted(action)
+        self:removeFromQueue(action)
+        self.current = self.queue[1]
+        while self.current do
+            local ok, valid = pcall(function() return self.current:isValidStart() end)
+            if ok and valid then
+                self.current:begin()
+                return
+            end
+            table.remove(self.queue, 1)          -- drop only the bad head
+            self.current = self.queue[1]
+        end
+    end
+
+    -- a head action that fell out of the engine action list: drop just it, run the next
+    function ISTimedActionQueue:tick()
+        local action = self.queue[1]
+        if action == nil then
+            self:clearQueue()
+            return
+        end
+        local inList = false
+        pcall(function() inList = action.character:getCharacterActions():contains(action.action) end)
+        if not inList then
+            table.remove(self.queue, 1)
+            self.current = self.queue[1]
+            if self.current then
+                local ok, valid = pcall(function() return self.current:isValidStart() end)
+                if ok and valid then self.current:begin() end
+            end
+            return
+        end
+        if action.action:hasStalled() then
+            self:onCompleted(action)
+            return
+        end
+    end
+
+    print("[EmpireQoL] Queue Guard loaded. A bugged action now drops itself instead of wiping your walk/sleep/build queue.")
+end
+
+Events.OnGameStart.Add(install)

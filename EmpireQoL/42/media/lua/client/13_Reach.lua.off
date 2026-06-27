@@ -1,0 +1,29 @@
+-- Empire QoL - Long Reach (cheat)
+-- Normally PZ walks your character over to a container before you can take from it, and
+-- refuses if it can't path there (walls, too far). This makes any container within REACH
+-- tiles count as "already in front of you" -- so loot transfers happen INSTANTLY, no
+-- walking, even through walls. Pairs with the extended loot panel: far boxes both show
+-- AND work. Anything beyond REACH falls back to vanilla (walks you there normally).
+
+-- ===== CONFIG =====
+local REACH = 5   -- tiles you can loot from without moving (~3 past the base ~1-tile reach).
+                  -- Kept modest so it doesn't feel cheaty/overwhelming. Bump if you want more.
+-- ==================
+
+local orig_walkToContainer = luautils.walkToContainer
+function luautils.walkToContainer(container, playerNum)
+    local within = false
+    pcall(function()
+        local playerObj = getSpecificPlayer(playerNum)
+        if not container or not playerObj then return end
+        local par = container:getParent()
+        local psq = playerObj:getCurrentSquare()
+        if par and psq and par:getSquare() then
+            if par:getSquare():DistToProper(psq) <= REACH then within = true end
+        end
+    end)
+    if within then return true end   -- in reach: transfer in place, skip the walk entirely
+    return orig_walkToContainer(container, playerNum)
+end
+
+print("[EmpireQoL] Long Reach loaded. Loot any container within " .. REACH .. " tiles WITHOUT walking.")

@@ -1,0 +1,118 @@
+-- Empire QoL - Smart Craft (craft straight from your base) -- v1
+-- Vanilla ISCraftingUI:getContainers() only gathers your worn bags + whatever container
+-- windows are open, so the Crafting panel can't see your base unless you open every shelf.
+-- This wraps it to ALSO add every real storage container within RADIUS of you (and the
+-- containers nested inside them), so crafting CHECKS and CONSUMES ingredients straight from
+-- your whole base -- the same "build from base" idea, applied to crafting: ammo smelting,
+-- metalworking, cooking, Hydrocraft, anything using the standard crafting window.
+--
+-- Safe with ProximityInventory: that mod builds ONE synthetic merged container ("proxInv")
+-- and its CraftingFix REMOVES it from crafting to avoid item-duping. We only ever add REAL
+-- world-attached containers (a synthetic container is never found by a world scan), we run
+-- AFTER their fix (so the merged container stays removed), and we dedup by object identity
+-- -- so every real container is counted exactly once and nothing dupes.
+
+local RADIUS = 10  -- v1.3: fallback radius used only when you're NOT standing in a registered base. Inside a base, SmartCraft scans the WHOLE base (via EmpireBases) and ignores this number.
+local TTL = 1500   -- ms; rapid crafting-window refreshes reuse one scan
+
+local cache = { key = nil, t = 0, list = nil }
+
+local function sqKey(p)
+    local sq = p and p:getCurrentSquare()
+    if not sq then return nil end
+    local ok, k = pcall(function() return sq:getX() .. "|" .. sq:getY() .. "|" .. sq:getZ() end)
+    return ok and k or nil
+end
+
+-- unique, NON-EMPTY real ItemContainers within RADIUS of the player, recursing into any
+-- container-ITEM sitting inside a shelf (a bag/crate inside a crate). Empties are skipped
+-- so RecipeManager's per-recipe checks stay lean.
+local function nearbyContainers(player)
+    local out, seen = {}, {}
+    local cell = getCell()
+    local sq0 = player and player:getCurrentSquare()
+    if not cell or not sq0 then return out end
+    local function consider(c, depth)
+        if not c or depth > 4 or seen[c] then return end
+        seen[c] = true
+        local items = c:getItems()
+        if items and items:size() > 0 then
+            table.insert(out, c)
+            for i = 0, items:size() - 1 do
+                local it = items:get(i)
+                if instanceof(it, "InventoryContainer") then
+                    local sub = nil
+                    pcall(function() sub = it:getInventory() end)
+                    if sub then consider(sub, depth + 1) end
+                end
+            end
+        end
+    end
+    -- WHOLE base when you're standing in a registered base (every shelf, +/- a few floors);
+    -- a radius box only as fallback when you're out in the world. Same bounds the F9 sorter
+    -- uses, so crafting reaches exactly what the sorter reaches -- no more 6-tile cutoff.
+    local bx1, bx2, by1, by2, bz1, bz2
+    if EmpireBases and EmpireBases.scanBounds then
+        bx1, bx2, by1, by2, bz1, bz2 = EmpireBases.scanBounds(player, RADIUS)
+    end
+    if not bx1 then
+        local cx, cy, cz = sq0:getX(), sq0:getY(), sq0:getZ()
+        bx1, bx2, by1, by2, bz1, bz2 = cx - RADIUS, cx + RADIUS, cy - RADIUS, cy + RADIUS, cz, cz
+    end
+    for z = bz1, bz2 do
+        for x = bx1, bx2 do
+            for y = by1, by2 do
+                local sq = cell:getGridSquare(x, y, z)
+                if sq then
+                    local sobs = sq:getStaticMovingObjects()
+                    for i = 0, sobs:size() - 1 do consider(sobs:get(i):getContainer(), 0) end
+                    local obs = sq:getObjects()
+                    for i = 0, obs:size() - 1 do
+                        local o = obs:get(i)
+                        for ci = 1, o:getContainerCount() do consider(o:getContainerByIndex(ci - 1), 0) end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function nearbyContainersCached(player)
+    local now = getTimestampMs()
+    local key = sqKey(player)
+    if cache.list and cache.key == key and (now - cache.t) < TTL then return cache.list end
+    cache.list = nearbyContainers(player)
+    cache.key = key
+    cache.t = now
+    return cache.list
+end
+
+local function install()
+    if not ISCraftingUI or not ISCraftingUI.getContainers then
+        print("[EmpireQoL] Smart Craft: ISCraftingUI missing, not hooked.")
+        return
+    end
+    -- orig is already the ProximityInventory/CraftingFix-wrapped getContainers, so calling
+    -- it keeps their proxInv removal intact; we just append real base containers afterward.
+    local orig = ISCraftingUI.getContainers
+    ISCraftingUI.getContainers = function(self)
+        local ret = orig(self)
+        pcall(function()
+            if not self.character or not self.containerList then return end
+            local present = {}
+            for i = 0, self.containerList:size() - 1 do present[self.containerList:get(i)] = true end
+            local extra = nearbyContainersCached(self.character)
+            for _, c in ipairs(extra) do
+                if not present[c] then
+                    self.containerList:add(c)
+                    present[c] = true
+                end
+            end
+        end)
+        return ret
+    end
+    print("[EmpireQoL] Smart Craft v1.3 loaded. Crafting pulls ingredients from your WHOLE base while you're in it (else " .. RADIUS .. " tiles).")
+end
+
+Events.OnGameStart.Add(install)

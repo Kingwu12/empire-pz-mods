@@ -1,0 +1,15 @@
+# Empire PZ mods repo — track ONLY our custom mod folders.
+# Ignore everything at top level...
+/*
+# ...then re-include just our stuff:
+!/.gitignore
+!/Empire*/
+
+# ...but the EmpireLean.txt preset + its backups are config, not code:
+EmpireLean.txt
+EmpireLean.txt.*
+
+# editor/OS noise inside mod folders
+Thumbs.db
+desktop.ini
+*.tmp

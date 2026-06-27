@@ -1,0 +1,121 @@
+-- ============================================================
+-- Empire Sort - CONFIG  (edit THIS file, never the 1000-line sorter)
+-- ------------------------------------------------------------
+-- Everything that decides "what F9 leaves alone" and "how oddball modded items
+-- get classified" lives here, in one small editable place. The main sorter
+-- (EmpireSortAll_Client.lua) calls into EmpireSortConfig.* at run time, so you can
+-- tune these lists without ever touching the big file.
+--
+-- Grounded against the active mod list (default.txt), 2026-06-23:
+--   * Solar "power box" = ImmersiveSolarArrays (ISA). Container type SolarBox /
+--     BatteryBank. F9 must NEVER touch it -- it was yanking the working battery
+--     (the panel kept running off saved charge, graphic still showed the battery).
+--   * Trolley = Tsar TMC supermarket cart (TMC.CartContainer / 2). F9 must never
+--     file the cart itself onto a shelf like loose gear.
+--   * Six ISA items ship with NO DisplayCategory (SolarPanel, Inverter, and the
+--     batteries) so the sorter was dumping them in Misc -> mapped to Electronics.
+--   * Armour (Brita / VanillaGearExpanded / any mod) is detected from the game's
+--     own ballistic / bite / scratch defense stats, so it routes to "Armour" for
+--     every armour mod with zero per-item upkeep.
+-- ============================================================
+
+EmpireSortConfig = EmpireSortConfig or {}
+
+-- ---- 1) CONTAINERS F9 SKIPS ENTIRELY -------------------------------------
+-- Matched as lowercase SUBSTRINGS against the container's type (same style as the
+-- sorter's existing fridge/freezer test). A match = never scanned, never evicted,
+-- never magneted out of. Add more (one per line) as you find functional containers
+-- F9 shouldn't raid (generators, deployables, etc.).
+EmpireSortConfig.EXCLUDE_CONTAINER_SUBSTR = {
+    "solarbox",     -- ISA solar battery bank ("power box")
+    "batterybank",  -- ISA battery bank (alternate container title/type)
+}
+
+-- ---- 2) ITEMS F9 NEVER RELOCATES -----------------------------------------
+-- Exact full item IDs (module.item). Left wherever they are -- floor, crate, hands.
+-- Use for wheeled carts, deployables, anything you don't want auto-shelved.
+EmpireSortConfig.NEVER_MOVE_FULLTYPE = {
+    ["TMC.CartContainer"]  = true,   -- Tsar supermarket trolley
+    ["TMC.CartContainer2"] = true,   -- Tsar supermarket trolley (variant)
+}
+
+-- ---- 3) EXPLICIT ITEM -> BUCKET OVERRIDES --------------------------------
+-- For modded items whose DisplayCategory is missing/wrong, so the sorter would
+-- otherwise dump them in Misc. Exact full item ID -> Empire bucket name.
+-- (Every ISA entry below ships with NO DisplayCategory -> was landing in Misc.)
+EmpireSortConfig.FULLTYPE_BUCKET = {
+    ["ISA.SolarPanel"]       = "Electronics",
+    ["ISA.ISAInverter"]      = "Electronics",
+    ["ISA.DeepCycleBattery"] = "Electronics",
+    ["ISA.SuperBattery"]     = "Electronics",
+    ["ISA.WiredCarBattery"]  = "Electronics",
+    ["ISA.DIYBattery"]       = "Electronics",
+}
+
+-- ---- 4) ARMOUR DETECTION (mod-agnostic) ----------------------------------
+-- Real armour carries protection stats ordinary clothes don't. Reading the game's
+-- own values means Brita, VanillaGearExpanded, and any future armour mod all route
+-- to "Armour" automatically. Tune if needed: raise BITE/SCRATCH if a heavy leather
+-- jacket sneaks in; lower a threshold if a vest is missed.
+EmpireSortConfig.ARMOUR_BULLET_MIN  = 0.1   -- ANY ballistic rating = armour
+EmpireSortConfig.ARMOUR_BITE_MIN    = 50    -- or very high bite defense
+EmpireSortConfig.ARMOUR_SCRATCH_MIN = 50    -- or very high scratch defense
+
+-- ============================================================
+-- Helpers the sorter calls. Defensive (pcall everything) so a weird modded item
+-- can never crash a sort.
+-- ============================================================
+
+local function lc(s) return tostring(s or ""):lower() end
+
+function EmpireSortConfig.isExcludedContainer(ctype)
+    local t = lc(ctype)
+    if t == "" then return false end
+    for _, sub in ipairs(EmpireSortConfig.EXCLUDE_CONTAINER_SUBSTR) do
+        if t:find(sub, 1, true) then return true end
+    end
+    return false
+end
+
+local function fullTypeOf(item)
+    local ft = nil
+    pcall(function() ft = item:getFullType() end)
+    if not ft or ft == "" then pcall(function() ft = item:getType() end) end
+    return ft
+end
+
+function EmpireSortConfig.isNeverMove(item)
+    if not item then return false end
+    local ft = fullTypeOf(item)
+    return ft ~= nil and EmpireSortConfig.NEVER_MOVE_FULLTYPE[ft] == true
+end
+
+-- armour = Clothing with real protection
+local function isArmour(item)
+    local cloth = false
+    pcall(function() cloth = instanceof(item, "Clothing") end)
+    if not cloth then return false end
+    local bullet, bite, scratch = 0, 0, 0
+    pcall(function() bullet  = item:getBulletDefense()  or 0 end)
+    pcall(function() bite    = item:getBiteDefense()    or 0 end)
+    pcall(function() scratch = item:getScratchDefense() or 0 end)
+    if bullet  >= EmpireSortConfig.ARMOUR_BULLET_MIN  then return true end
+    if bite    >= EmpireSortConfig.ARMOUR_BITE_MIN    then return true end
+    if scratch >= EmpireSortConfig.ARMOUR_SCRATCH_MIN then return true end
+    return false
+end
+
+-- Returns an Empire bucket name for items the normal DisplayCategory logic gets
+-- wrong, or nil to let the sorter classify normally.
+-- Priority: explicit override > armour heuristic > nil (normal path).
+function EmpireSortConfig.fulltypeBucket(item)
+    if not item then return nil end
+    local ft = fullTypeOf(item)
+    if ft and EmpireSortConfig.FULLTYPE_BUCKET[ft] then
+        return EmpireSortConfig.FULLTYPE_BUCKET[ft]
+    end
+    if isArmour(item) then return "Armour" end
+    return nil
+end
+
+print("[EmpireSortAll] Config loaded (exclusions + modded-item recognition + armour detection).")

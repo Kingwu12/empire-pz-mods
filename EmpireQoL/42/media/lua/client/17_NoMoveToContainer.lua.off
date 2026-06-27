@@ -1,0 +1,26 @@
+-- Empire QoL - No "Move to Container" clutter
+-- Strips the vanilla "Move to" submenu and the "Put in Container" options from the
+-- inventory right-click menu. You sort in the inventory window, so these just clutter
+-- the menu (and the list grows with every nearby container). Uses the engine's own
+-- removeOptionByName, AFTER vanilla has finished building the menu -- so it's a clean
+-- removal, not a rebuild.
+
+local function onFill(player, context, items)
+    if not context or not context.options then return end
+    local moveTo = getText("ContextMenu_Move_To")   -- "Move to"
+    local putPrefix = "Put in Container"
+    -- collect names first, then remove (don't mutate the list while iterating it)
+    local kill = {}
+    for _, opt in ipairs(context.options) do
+        local n = opt.name
+        if n and (n == moveTo or n:sub(1, #putPrefix) == putPrefix) then
+            kill[#kill + 1] = n
+        end
+    end
+    for _, n in ipairs(kill) do
+        pcall(function() context:removeOptionByName(n) end)
+    end
+end
+Events.OnFillInventoryObjectContextMenu.Add(onFill)
+
+print("[EmpireQoL] No Move-to-Container loaded: stripped move-to / put-in-container options from inventory right-click.")

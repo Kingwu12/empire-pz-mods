@@ -1,0 +1,5 @@
+name=Empire Production
+id=EmpireProduction
+description=Accrual-based automation. Designate a container as a production node; it converts inputs to outputs over game-time, gated by input supply and a buffer cap. O(1) on access, no per-tick simulation. Generic - recipes are data.
+poster=
+url=

@@ -1,0 +1,157 @@
+-- EmpireQoL :: 30_BuildMenu.lua
+-- On-demand Build menu. Opens the full build tree from a HUD button,
+-- so the heavy "scan + list buildables" cost is paid ONLY when you open
+-- Build -- not on every world right-click.
+-- Reuses the game's own ISBuildMenu.doBuildMenu (vanilla + Improved Build Menu),
+-- so we are not re-implementing any build logic.
+
+EmpireBuild = EmpireBuild or {}
+
+local function gatherSquareObjects(sq)
+    local t = {}
+    if not sq then return t end
+    local objs = sq:getObjects()
+    if not objs then return t end
+    for i = 0, objs:size() - 1 do
+        table.insert(t, objs:get(i))
+    end
+    return t
+end
+
+-- Every build-menu provider present in this game (vanilla + mods). Resolved at call time
+-- so it picks up whatever's loaded. ONE list, used both to fill the on-demand Build menu
+-- AND to strip these same builders from the world right-click (so building lives on the
+-- button only). All of these are OnFillWorldObjectContextMenu handlers -> same call shape.
+function EmpireBuild.getBuilders()
+    local list = {}
+    local function add(label, fn)
+        if type(fn) == "function" then list[#list + 1] = { label = label, fn = fn } end
+    end
+    add("Carpentry",  ISBuildMenu and ISBuildMenu.doBuildMenu)
+    add("Metalwork",  ISMetalWeldingMenu and ISMetalWeldingMenu.doBuildMenu)
+    add("Blacksmith", ISBlacksmithMenu and ISBlacksmithMenu.doBuildMenu)
+    -- Improved Build Menu's concrete / from-inventory builds (e.g. pour concrete) -- was missing.
+    add("IBM-Inv",    ISInventoryMenu and ISInventoryMenu.doBuildMenu)
+    -- Hydrocraft ships TWO build menus: the regular tree (HydrocraftBuild.doBuildMenu) AND the
+    -- AdvancedBuild tree (Hydrocraft.doBuildMenus). We were only calling AdvancedBuild, so half
+    -- of Hydrocraft's builds never showed. Add both.
+    add("Hydrocraft", HydrocraftBuild and HydrocraftBuild.doBuildMenu)
+    add("HydroAdv",   Hydrocraft and Hydrocraft.doBuildMenus)
+    add("MoreBuild",  MoreBuild and MoreBuild.OnFillWorldObjectContextMenu)
+    add("Lights",     ISLightContextMenu and ISLightContextMenu.doMenu)
+    return list
+end
+
+function EmpireBuild.open(anchor)
+    local playerNum = 0
+    local playerObj = getSpecificPlayer(playerNum)
+    if not playerObj then return end
+    if playerObj:getVehicle() then return end
+    local sq = playerObj:getCurrentSquare()
+    if not sq then return end
+
+    local worldobjects = gatherSquareObjects(sq)
+
+    local x, y = getMouseX(), getMouseY()
+    if anchor then
+        x = anchor:getAbsoluteX() + anchor:getWidth() + 4
+        y = anchor:getAbsoluteY()
+    end
+
+    local ok, context = pcall(ISContextMenu.get, playerNum, x, y)
+    if not ok or not context then return end
+
+    -- Run EVERY build provider into this menu (vanilla carpentry + metalwork + blacksmith
+    -- + Hydrocraft + MoreBuild + lights + whatever else is loaded). Same list is stripped
+    -- from right-click below, so building lives here, not on every world right-click.
+    for _, b in ipairs(EmpireBuild.getBuilders()) do
+        pcall(b.fn, playerNum, context, worldobjects, false)
+    end
+
+    -- If nothing was added (e.g. mid-air), close cleanly instead of an empty box.
+    if context.numOptions and context.numOptions <= 1 then
+        context:setVisible(false)
+        context:removeFromUIManager()
+    end
+end
+
+-- ===================== HUD BUTTON (top-left) =====================
+EmpireBuild.button = EmpireBuild.button or nil
+
+function EmpireBuild.onButtonClick(target, button)
+    EmpireBuild.open(button)
+end
+
+local function createBuildButton()
+    if EmpireBuild.button then return end
+    -- Bottom-left, clear of the top-left mod UI it was overlapping. Nudge the y/x here if
+    -- it still clips your health panel / hotbar -- just say where you want it.
+    local sh = getCore():getScreenHeight()
+    local btn = ISButton:new(12, sh - 220, 72, 22, "Build", nil, EmpireBuild.onButtonClick)
+    btn:initialise()
+    btn:instantiate()
+    btn.font = UIFont.Small
+    btn.borderColor   = { r = 0.72, g = 0.55, b = 0.20, a = 0.95 }
+    btn.backgroundColor = { r = 0.0, g = 0.0, b = 0.0, a = 0.55 }
+    btn.backgroundColorMouseOver = { r = 0.72, g = 0.55, b = 0.20, a = 0.45 }
+    btn:setVisible(true)
+    btn:addToUIManager()
+    EmpireBuild.button = btn
+end
+
+Events.OnGameStart.Add(createBuildButton)
+
+-- BUILD MOVED TO THE BUTTON: building lives on the Build button, not the world right-click.
+-- Un-registering each provider was unreliable -- mods like Ranching register under refs we
+-- can't predict, so only a handful ever matched. Instead we strip build/ranching entries
+-- from the FINISHED menu by name. ISWorldObjectContextMenu.createMenu runs every provider
+-- INSIDE itself, so stripping the menu it returns is guaranteed to run last and catch them
+-- all: vanilla, IBM, MoreBuild, Hydrocraft, Ranching, anything. The Build button builds its
+-- own menu (ISContextMenu.get) and is NOT touched by this, so it keeps every builder.
+local STRIP_FRAGMENTS = { "build", "ranch", "blacksmith", "weld", "metalwork", "metal work", "carpentr", "masonry", "forge" }
+
+local function isBuildOptionName(name)
+    if not name then return false end
+    local low = string.lower(tostring(name))
+    for _, frag in ipairs(STRIP_FRAGMENTS) do
+        if string.find(low, frag, 1, true) then return true end
+    end
+    return false
+end
+
+local function stripBuildFromMenu(context)
+    if not context or not context.options then return 0 end
+    local names = {}
+    for _, opt in ipairs(context.options) do
+        if opt and isBuildOptionName(opt.name) then names[#names + 1] = opt.name end
+    end
+    for _, nm in ipairs(names) do
+        pcall(function() context:removeOptionByName(nm) end)
+    end
+    -- if stripping emptied the menu (right-click that only offered Build), don't show a blank box
+    if #names > 0 and context.numOptions and context.numOptions <= 0 then
+        pcall(function() context:setVisible(false); context:removeFromUIManager() end)
+    end
+    return #names
+end
+
+local function installRightClickStrip()
+    if not ISWorldObjectContextMenu or not ISWorldObjectContextMenu.createMenu then
+        print("[EmpireBuild] strip: createMenu missing, not hooked.")
+        return
+    end
+    local orig = ISWorldObjectContextMenu.createMenu
+    ISWorldObjectContextMenu.createMenu = function(player, worldobjects, x, y, test)
+        -- Mark this as the throwaway right-click pass so SmartBuild skips its whole-base scan
+        -- here (the build entries get stripped below anyway). Reset right after, so the Build
+        -- button and build-placement validation still get the full whole-base material map.
+        EmpireBuild.rightClickStripping = true
+        local okc, context = pcall(orig, player, worldobjects, x, y, test)
+        EmpireBuild.rightClickStripping = false
+        if not okc then return nil end
+        if not test then pcall(function() stripBuildFromMenu(context) end) end
+        return context
+    end
+    print("[EmpireBuild] world right-click build/ranching strip installed (post-build, by name -- catches every provider).")
+end
+Events.OnGameStart.Add(installRightClickStrip)

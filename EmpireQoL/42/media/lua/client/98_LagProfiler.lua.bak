@@ -1,0 +1,41 @@
+-- Empire QoL - Lag Profiler (world-menu per-handler timing)
+-- Wraps the heaviest known world-context-menu handlers so we see, per restart,
+-- exactly which mod eats the right-click frames. Diagnostic only; F10 silences output.
+-- Installs at OnGameStart so every mod's functions already exist before we wrap them.
+
+local function ts() return getTimestampMs() end
+
+local function wrapWorldMenuFn(label, fn)
+    if type(fn) ~= "function" then return false end
+    Events.OnFillWorldObjectContextMenu.Remove(fn)
+    Events.OnFillWorldObjectContextMenu.Add(function(...)
+        local t0 = ts()
+        fn(...)
+        local dt = ts() - t0
+        if EMPIRE_DEBUG_ON and dt >= 15 then
+            print("[EMPIRE-DEBUG] LAG world-fill [" .. label .. "]: " .. dt .. "ms")
+        end
+    end)
+    return true
+end
+
+local function installLagProfiler()
+    local n = 0
+    local function try(label, getter)
+        local ok, fn = pcall(getter)
+        if ok and type(fn) == "function" then
+            if wrapWorldMenuFn(label, fn) then n = n + 1 end
+        end
+    end
+    try("Hydrocraft",       function() return Hydrocraft.doBuildMenus end)
+    try("P4TidyUp",         function() return P4TidyUpMeister.OnFillWorldObjectContextMenu end)
+    try("MoreBuilds",       function() return MoreBuild.OnFillWorldObjectContextMenu end)
+    try("MoreBuilds-Light", function() return ISLightContextMenu.doMenu end)
+    try("CheatMenu",        function() return ISUICheatMenu.createMenuEntries end)
+    try("SuperbSurvivors",  function() return SurvivorsFillWorldObjectContextMenu end)
+    try("Trolley",          function() return TrolleyOnFillWorldObjectContextMenu end)
+    print("[EMPIRE-DEBUG] lag profiler installed: wrapped " .. n .. " world-menu handlers")
+end
+
+Events.OnGameStart.Add(installLagProfiler)
+print("[EmpireQoL] Lag Profiler queued (installs at game start).")

@@ -1,0 +1,25 @@
+-- Empire QoL - Frictionless Loot Focus
+-- The friction: opening an individual storage container makes the loot panel "stick" to it,
+-- so when you walk away it lingers there, open and empty. PZ already auto-refreshes the
+-- panel as you move (on square/facing change) -- that's why the merged proximity view and
+-- the ground update fine, but a hand-opened container does not.
+-- The fix: default ProximityInventory to its merged "everything in range" view (Force
+-- Selected). Then you never select a single container: you see all nearby storage in ONE
+-- live list that rebuilds as you move, grab any of it with Long Reach, and F9 sorts it home.
+-- Nothing can go stale because there's no individual container to get stuck on.
+-- Toggle it off any time with Numpad0 (ProximityInventory's own keybind).
+
+local function init()
+    if ProxInv then
+        ProxInv.isToggled = true        -- merged proximity view on
+        ProxInv.isForceSelected = true  -- pin the panel to the merged view, not a single box
+        if ISInventoryPage and ISInventoryPage.dirtyUI then
+            pcall(ISInventoryPage.dirtyUI)
+        end
+        print("[EmpireQoL] Loot Focus: merged proximity view ON by default (Numpad0 toggles).")
+    else
+        print("[EmpireQoL] Loot Focus: ProximityInventory (ProxInv) not found - skipped.")
+    end
+end
+
+Events.OnGameStart.Add(init)

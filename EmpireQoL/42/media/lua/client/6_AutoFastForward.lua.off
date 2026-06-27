@@ -1,0 +1,113 @@
+-- Empire QoL - Auto Fast Forward
+-- Speeds up time automatically during any timed action (reading, eating,
+-- crafting, sorting, looting/transfers, etc) and drops back to normal the
+-- instant the action ends or a zombie shows up.
+--
+-- WHY THIS DESIGN:
+--   PZ already auto-RESETS speed to 1x when the action queue empties (the vanilla
+--   "Reset game speed after timed action" option). What it never does is speed UP
+--   for you. So this only handles the speed-up + combat safety, and lets the same
+--   tick check drop you back down. Uses UIManager.getSpeedControls(), the exact API
+--   the engine itself uses in ISTimedActionQueue.lua -- no guessing.
+
+-- ===== CONFIG =====
+local TARGET_SPEED = 3    -- 2 = fast (>>), 3 = fastest (>>>). Lower to 2 if 3 overshoots.
+local AVOID_COMBAT = true -- never fast-forward while zombies are visible/chasing/close
+local LINGER_TICKS = 240  -- ~4s grace: keep speed up after the queue empties, so rapid
+                          -- one-by-one transfers (loading a trunk, looting a pile, sorting)
+                          -- don't drop it in the micro-gaps between actions. Combat/aim bails instantly.
+-- ==================
+
+-- Never fast-forward during fragile multi-stage build actions (barricade etc):
+-- re-asserting game speed mid-chain can desync the equip->place->equip sequence.
+-- Walk/move actions are excluded too: forcing (and re-asserting every tick) 3x speed during
+-- a walk desyncs its per-tick movement/pathing at low FPS, and the engine then flags it
+-- "bugged action, cleared queue ISWalkToTimedAction" -- i.e. your click-to-walk silently dies.
+-- Only stationary actions (craft/read/sort/loot/build) should ever fast-forward.
+local FRAGILE_ACTIONS = { ISBarricadeAction=true, ISUnbarricadeAction=true,
+    ISWalkToTimedAction=true, ISWalkToTimedActionF=true, ISRunToTimedAction=true }
+local function doingFragileAction(player)
+    local ok, res = pcall(function()
+        local q = ISTimedActionQueue.getTimedActionQueue(player)
+        if not q then return false end
+        local function isFrag(a) return a and a.Type and FRAGILE_ACTIONS[a.Type] end
+        -- Only the RUNNING action (and the one about to run) matter -- speed is re-asserted
+        -- every tick, so we never needed to scan the WHOLE queue. Scanning all of it was O(N)
+        -- per tick, which is what made a 200-item Grab N / trunk-load crawl to 30fps.
+        if isFrag(q.current) then return true end
+        if q.queue and isFrag(q.queue[1]) then return true end
+        return false
+    end)
+    return ok and res
+end
+
+local engaged = false  -- true only while WE are the ones holding the speed up
+local lingerLeft = 0   -- ticks remaining to hold the speed up after the last seen action
+
+local function zombiesNear(player)
+    -- Only count it as unsafe if a zombie is actually COMING for you (chasing) or is
+    -- RIGHT NEXT to you. Merely visible zombies -- the ones milling around outside the
+    -- base while you weld / build / disassemble -- no longer block fast-forward.
+    -- (It still drops to 1x instantly the moment one aggros or closes in.)
+    local s = player:getStats()
+    return s:getNumChasingZombies() > 0
+        or s:getNumVeryCloseZombies() > 0
+end
+
+local function onTick()
+    local player = getSpecificPlayer(0)
+    if not player or player:isDead() or player:isAsleep() then return end
+
+    local speed = UIManager.getSpeedControls()
+    if not speed then return end
+
+    local current = speed:getCurrentGameSpeed()
+    if current == 0 then return end -- respect manual pause, never override it
+
+    local doingAction = ISTimedActionQueue.isPlayerDoingAction(player)
+    local unsafe = (AVOID_COMBAT and zombiesNear(player)) or player:isAiming() or doingFragileAction(player)
+
+    -- Safety always wins, immediately: drop back the instant combat/aiming starts.
+    if unsafe then
+        -- drop ANY fast-forward we're managing (mod-set OR your manual >>/>>>) on combat/aim
+        if engaged and current >= 2 then
+            speed:SetCurrentGameSpeed(1)
+        end
+        engaged = false
+        lingerLeft = 0
+        return
+    end
+
+    -- Refresh the linger window every tick we see an action; otherwise count it down.
+    -- This bridges the sub-second gaps between rapid one-by-one transfers so the
+    -- speed-up actually latches while loading a trunk / looting a pile.
+    if doingAction then
+        lingerLeft = LINGER_TICKS
+    elseif lingerLeft > 0 then
+        lingerLeft = lingerLeft - 1
+    end
+
+    if lingerLeft > 0 then
+        -- Speed up from any slow speed (1x or 2x) to target. Re-asserts every tick, so it
+        -- wins the fight against the game's per-action speed reset.
+        if current < TARGET_SPEED then
+            speed:SetCurrentGameSpeed(TARGET_SPEED)
+            engaged = true
+        end
+        -- Own the drop for ANY elevated speed seen during an action window, even one YOU
+        -- set manually. This is the fix for "I hit >>> myself, went afk, and it stayed at
+        -- 3x after the action finished" -- a manual speed-up used to never be ours to
+        -- reset, so it lingered forever.
+        if current >= 2 then engaged = true end
+    else
+        -- Window expired: drop back to normal if we were managing a fast-forward
+        -- (mod-initiated OR your manual >>/>>>), so afk actions always end at 1x.
+        if engaged and current >= 2 then
+            speed:SetCurrentGameSpeed(1)
+        end
+        engaged = false
+    end
+end
+
+Events.OnTick.Add(onTick)
+print("[EmpireQoL] Auto Fast Forward loaded (target speed " .. TARGET_SPEED .. ", combat-safe, linger ~2s).")

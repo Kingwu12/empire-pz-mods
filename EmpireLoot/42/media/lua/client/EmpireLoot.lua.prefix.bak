@@ -1,0 +1,278 @@
+-- Empire Loot - Smart Filter + Auto Engine + Quick Transfer
+
+EmpireLoot = EmpireLoot or {}
+
+-- =============================================
+-- SMART LOOT FILTER
+-- =============================================
+-- Toggle with F7. When ON, loot all only grabs
+-- items matching your priority list below.
+-- Edit PRIORITY_TYPES and PRIORITY_CATEGORIES
+-- to match what YOUR empire needs.
+
+EmpireLoot.filterEnabled = false
+local FILTER_KEY = Keyboard.KEY_F7
+
+-- Item categories always worth grabbing
+local PRIORITY_CATEGORIES = {
+    ["Ammo"]      = true,
+    ["Weapon"]    = true,
+    ["WeaponPart"]= true,
+    ["Medical"]   = true,
+    ["Literature"] = true,  -- skill books
+    ["Material"]  = true,   -- crafting mats
+    ["Tool"]      = true,
+}
+
+-- Specific item types always worth grabbing
+-- (catches things that have wrong categories)
+local PRIORITY_TYPES = {
+    -- Building & crafting
+    ["Nails"]          = true,
+    ["NailsBox"]       = true,
+    ["Plank"]          = true,
+    ["ScrapMetal"]     = true,
+    ["Screws"]         = true,
+    ["DuctTape"]       = true,
+    ["WoodGlue"]       = true,
+    ["ElectricWire"]   = true,
+    ["Bleach"]         = true,
+    ["BlowTorch"]      = true,
+    -- Fuel & power
+    ["GasCan"]         = true,
+    ["GasCanFull"]     = true,
+    ["PropaneTank"]    = true,
+    ["LighterFull"]    = true,
+    -- Food worth keeping (non-perishable)
+    ["TinnedBeans"]    = true,
+    ["TinnedSardines"] = true,
+    ["TinnedCorn"]     = true,
+    ["TinnedPeas"]     = true,
+    ["Rice"]           = true,
+    ["Pasta"]          = true,
+    ["Crackers"]       = true,
+    ["Chips"]          = true,
+    ["CannedCorn"]     = true,
+    ["CannedPeas"]     = true,
+    ["CannedTomato"]   = true,
+    -- Water
+    ["WaterBottleFull"]= true,
+    ["WaterBottle"]    = true,
+    -- Bags (always useful)
+    ["BigHikingBag"]   = true,
+    ["DuffelBag"]      = true,
+    ["DuffelBagTINT"]  = true,
+    -- Seeds (farming empire)
+    ["Carrot Seeds"]   = true,
+    ["Potato Seeds"]   = true,
+    ["Cabbage Seeds"]  = true,
+    ["Tomato Seeds"]   = true,
+}
+
+-- Item types to always SKIP even if category matches
+local SKIP_TYPES = {
+    ["Pot"]            = true,
+    ["Pan"]            = true,
+    ["FryingPan"]      = true,
+    ["Bowl"]           = true,
+    ["Plate"]          = true,
+    ["Fork"]           = true,
+    ["Spoon"]          = true,
+    ["Spatula"]        = true,
+    ["RollingPin"]     = true,
+    ["CanOpener"]      = true,
+    ["CookingPot"]     = true,
+    ["KettleFull"]     = true,
+    ["Kettle"]         = true,
+    ["MopBucket"]      = true,
+    ["Mop"]            = true,
+    ["Broom"]          = true,
+    ["TrashBag"]       = true,
+    ["PaperBag"]       = true,
+    ["PillowCase"]     = true,
+    ["SheetRope"]      = true,
+    ["Sheet"]          = false,  -- keep sheets (barricade)
+    ["Tissue"]         = true,
+    ["ToiletPaper"]    = true,
+    ["VHSHomemade"]    = true,
+    ["CDplayer"]       = true,
+    ["Radio"]          = true,   -- keep? change to false if you want radios
+}
+
+local function shouldLootItem(item)
+    if not item then return false end
+    local t = item:getType() or ""
+    local cat = item:getCategory() or ""
+
+    -- Always skip junk
+    if SKIP_TYPES[t] == true then return false end
+
+    -- Always grab priority types
+    if PRIORITY_TYPES[t] then return true end
+
+    -- Always grab priority categories
+    if PRIORITY_CATEGORIES[cat] then return true end
+
+    -- Always grab anything with significant weight value
+    -- (catches misc tools/weapons with weird categories)
+    if item:isWeapon() then return true end
+
+    return false
+end
+
+-- Patch loot all to respect filter
+local function patchLootAll()
+    if not ISInventoryPaneContextMenu then return end
+    local oldTransferAll = ISInventoryPaneContextMenu.transferAllItems
+    if not oldTransferAll then return end
+
+    ISInventoryPaneContextMenu.transferAllItems = function(player, fromContainer, toContainer, ...)
+        if not EmpireLoot.filterEnabled then
+            return oldTransferAll(player, fromContainer, toContainer, ...)
+        end
+
+        -- Filter mode: only transfer matching items
+        if not fromContainer then return end
+        local items = fromContainer:getItems()
+        if not items then return end
+
+        for i = items:size() - 1, 0, -1 do
+            local item = items:get(i)
+            if item and shouldLootItem(item) then
+                ISInventoryTransferAction.transferItem(player, item, fromContainer, toContainer)
+            end
+        end
+    end
+    print("[EmpireLoot] Loot filter patched.")
+end
+
+local function onKeyPressed(key)
+    if key == FILTER_KEY then
+        EmpireLoot.filterEnabled = not EmpireLoot.filterEnabled
+        local player = getSpecificPlayer(0)
+        if player then
+            local msg = EmpireLoot.filterEnabled
+                and "Smart Filter ON - only grabbing essentials"
+                or  "Smart Filter OFF - looting everything"
+            HaloTextHelper.addText(player, msg,
+                EmpireLoot.filterEnabled
+                    and HaloTextHelper.getColorGreen()
+                    or  HaloTextHelper.getColorWhite())
+        end
+    end
+end
+
+Events.OnKeyPressed.Add(onKeyPressed)
+Events.OnGameStart.Add(function() pcall(patchLootAll) end)
+
+-- =============================================
+-- AUTO ENGINE START ON ENTRY
+-- =============================================
+-- Defer the engine start to the next tick. Entering fires this event DURING the
+-- enter-vehicle animation (alongside Superb Survivors + the DAMN anim library), and
+-- starting the engine synchronously there threw an error on every entry. One tick
+-- later the seat/driver state is settled, so we gate on the same checks the base
+-- game's start-engine action uses -- no more error spam, and it actually starts.
+local pendingEngineStart = nil
+
+local function onPlayerEnterVehicle(player)
+    if player and player:getPlayerNum() == 0 then
+        pendingEngineStart = player
+    end
+end
+
+local function tryPendingEngineStart()
+    local player = pendingEngineStart
+    if not player then return end
+    pendingEngineStart = nil
+    pcall(function()
+        local vehicle = player:getVehicle()
+        if not vehicle then return end
+        if not vehicle:isDriver(player) then return end                       -- driver only
+        if vehicle:isEngineRunning() or vehicle:isEngineStarted() then return end
+        ISVehicleMenu.onStartEngine(player)
+        HaloTextHelper.addText(player, "Engine on", HaloTextHelper.getColorWhite())
+    end)
+end
+
+Events.OnTick.Add(tryPendingEngineStart)
+if Events.OnEnterVehicle then Events.OnEnterVehicle.Add(onPlayerEnterVehicle) end
+
+-- =============================================
+-- QUICK TRAILER TRANSFER (F8)
+-- =============================================
+-- Opens nearby trailer/vehicle container instantly
+local TRANSFER_KEY = Keyboard.KEY_F8
+
+local function openNearbyTrailer()
+    local player = getSpecificPlayer(0)
+    if not player then return end
+
+    -- Check vehicle player is near
+    local vehicle = player:getVehicle()
+    if vehicle then
+        -- Already in a vehicle - open its trunk
+        local trunk = vehicle:getPartById("TrunkDoor")
+        if trunk and trunk:getContainer() then
+            ISInventoryPage.toggle(player:getPlayerNum())
+            return
+        end
+    end
+
+    -- Scan for nearby vehicles with large storage
+    local px = math.floor(player:getX())
+    local py = math.floor(player:getY())
+    local pz = math.floor(player:getZ())
+    local bestVehicle = nil
+    local bestCapacity = 0
+
+    for x = px - 6, px + 6 do
+        for y = py - 6, py + 6 do
+            local sq = getCell():getGridSquare(x, y, pz)
+            if sq then
+                local objs = sq:getObjects()
+                for i = 0, objs:size() - 1 do
+                    local obj = objs:get(i)
+                    if obj and instanceof(obj, "IsoPart") then
+                        local v = obj:getVehicle()
+                        if v then
+                            for pi = 0, v:getPartCount() - 1 do
+                                local part = v:getPartByIndex(pi)
+                                if part and part:getContainer() then
+                                    local cap = part:getContainer():getCapacity()
+                                    if cap > bestCapacity then
+                                        bestCapacity = cap
+                                        bestVehicle = v
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if bestVehicle then
+        -- Open the loot window targeting this vehicle
+        local lootPage = getPlayerLoot(0)
+        if lootPage then
+            lootPage:setVisible(true)
+            HaloTextHelper.addText(player,
+                "Opening nearby vehicle storage (" .. bestCapacity .. " cap)",
+                HaloTextHelper.getColorGreen())
+        end
+    else
+        HaloTextHelper.addText(player, "No vehicle storage nearby", HaloTextHelper.getColorWhite())
+    end
+end
+
+local function onKeyPressedTransfer(key)
+    if key == TRANSFER_KEY then
+        pcall(openNearbyTrailer)
+    end
+end
+
+Events.OnKeyPressed.Add(onKeyPressedTransfer)
+
+print("[EmpireLoot] Loaded. F7=filter toggle, F8=quick vehicle storage, auto engine start active.")

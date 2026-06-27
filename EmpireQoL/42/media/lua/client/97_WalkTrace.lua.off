@@ -1,0 +1,68 @@
+-- EmpireQoL / 97_WalkTrace.lua
+-- Auto-trace for the broken Walk-To. Wraps the vanilla walk action so EVERY walk
+-- attempt prints its lifecycle to console (grep [WalkTrace]) -- no keypress needed.
+-- Tells us exactly where the walk dies: never starts, starts then instantly cancels
+-- (something pinning the player), or starts and just hangs. Also dumps the player's
+-- SSC survivor state (AIMode / current task / walking-permitted), since a stuck SSC
+-- task on SSM:Get(0) is the prime suspect for "queued but never completes".
+-- Disable later by renaming to 97_WalkTrace.lua.off
+
+local applied = false
+
+local function pstate()
+    local p = getSpecificPlayer(0)
+    local q = "queueLen=?"
+    pcall(function()
+        local tq = ISTimedActionQueue.getTimedActionQueue(p)
+        q = "queueLen=" .. tostring(tq and tq.queue and #tq.queue or -1)
+    end)
+    local ss = "ss=none"
+    pcall(function()
+        if SSM and SSM.Get then
+            local sv = SSM:Get(0)
+            if sv then
+                local m, t, wp = "?", "?", "?"
+                pcall(function() m = tostring(sv:getAIMode()) end)
+                pcall(function() t = tostring(sv:getTaskManager():getCurrentTask()) end)
+                pcall(function() wp = tostring(sv:isWalkingPermitted()) end)
+                ss = "ssAIMode=" .. m .. " ssTask=" .. t .. " walkPerm=" .. wp
+            end
+        end
+    end)
+    return q .. " " .. ss
+end
+
+local function apply()
+    if applied then return end
+    if not ISWalkToTimedAction then return end
+    applied = true
+
+    local _new = ISWalkToTimedAction.new
+    function ISWalkToTimedAction:new(...)
+        local o = _new(self, ...)
+        print("[WalkTrace] CREATED   " .. pstate())
+        return o
+    end
+
+    local _start = ISWalkToTimedAction.start
+    function ISWalkToTimedAction:start(...)
+        print("[WalkTrace] START     " .. pstate())
+        if _start then return _start(self, ...) end
+    end
+
+    local _perform = ISWalkToTimedAction.perform
+    function ISWalkToTimedAction:perform(...)
+        print("[WalkTrace] PERFORM (reached destination / completed)")
+        if _perform then return _perform(self, ...) end
+    end
+
+    local _stop = ISWalkToTimedAction.stop
+    function ISWalkToTimedAction:stop(...)
+        print("[WalkTrace] STOP (cancelled before arriving)   " .. pstate())
+        if _stop then return _stop(self, ...) end
+    end
+
+    print("[WalkTrace] hooks applied.")
+end
+
+Events.OnGameStart.Add(apply)

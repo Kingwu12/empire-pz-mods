@@ -1,0 +1,25 @@
+-- Empire QoL - Survivor Supply  (immersive density, FPS-safe)
+-- The world stays a living world: survivors appear naturally as you explore (SSC rolls once per
+-- in-game hour, near your group's territory) and you recruit them face-to-face. No spawn button,
+-- no cheats -- that would gut the immersion. The ONLY thing that crashed FPS was DENSITY: the
+-- old 40% rate + roaming packs put ~14 AI bodies on the map at once. SSC caps total living
+-- survivors at Limit_Npcs_Spawn (counts crew + wild), so that one number is the FPS dial.
+--
+-- Tuning below = a sparsely populated, recruitable world that holds frames:
+--   NpcSpawnChance      % chance per hourly roll a survivor appears        (occasional)
+--   Limit_Npcs_Spawn    HARD CAP on total living survivors  <-- THE FPS DIAL
+--   NpcGroupsSpawnsSize  spawn ATTEMPTS per hour                            (rare = 1)
+--   Limit_Npc_Groups     roaming packs (each = a burst of bodies)          (off)
+-- Want a busier world? raise Limit_Npcs_Spawn. Want max FPS? lower it. One knob.
+
+local function applySupply()
+    NpcSpawnChance      = 0    -- no wild/ambient spawns -- Wanderers is the ONLY survivor source
+    Limit_Npcs_Spawn    = 10   -- FPS DIAL: max living survivors (= your crew cap; no wild competes)
+    NpcGroupsSpawnsSize  = 1   -- one spawn attempt per in-game hour (rare, natural)
+    Limit_Npc_Groups    = 0    -- no roaming packs (they spawn 3+ at once = FPS spikes)
+end
+
+Events.OnGameStart.Add(applySupply)
+Events.EveryOneMinute.Add(applySupply)   -- re-assert so SSC can't reset it mid-game
+
+print("[EmpireQoL] Survivor Supply: no wild spawns, cap 10 living (FPS dial). Crew arrives via Wanderers.")

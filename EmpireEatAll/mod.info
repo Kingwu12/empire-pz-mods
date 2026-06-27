@@ -1,0 +1,4 @@
+name=Empire Eat All
+id=EmpireEatAll
+description=One-click "Eat All" on food. Skips the portion (1/4, 1/2) submenu.
+versionMin=42.0

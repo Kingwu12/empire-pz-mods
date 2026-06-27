@@ -1,0 +1,5 @@
+name=Empire RF Gun Fix
+id=EmpireRFGunFix
+description=B42 patch: registers RF_AR15SAIGRY and RF_G36K.
+versionMin=42.0
+require=RealFirearms

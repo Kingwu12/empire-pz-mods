@@ -1,0 +1,123 @@
+-- EmpireQoL / 99_SleepDebug.lua
+-- Diagnostic logging for the bed Sleep flow. Wraps the three vanilla sleep
+-- functions at OnGameStart (after mods like SuperbSurvivors apply overrides)
+-- and prints state to the console. Grep console.txt for [SleepDebug].
+-- To disable later: rename to 99_SleepDebug.lua.off
+
+local applied = false
+
+local function applyHooks()
+    if applied then return end
+    if not ISWorldObjectContextMenu then return end
+    applied = true
+
+    -- 1) Sleep option clicked -> opens the confirm dialog
+    local origOnSleep = ISWorldObjectContextMenu.onSleep
+    ISWorldObjectContextMenu.onSleep = function(bed, player, ...)
+        local p = getSpecificPlayer(player)
+        print("[SleepDebug] onSleep FIRED"
+            .. " bed=" .. tostring(bed)
+            .. " player=" .. tostring(player)
+            .. " fatigue=" .. (p and tostring(p:getStats():getFatigue()) or "?")
+            .. " dialogAlreadyOpen=" .. tostring(ISWorldObjectContextMenu.sleepDialog ~= nil))
+        return origOnSleep(bed, player, ...)
+    end
+
+    -- 2) YES / NO pressed on the confirm dialog
+    local origConfirm = ISWorldObjectContextMenu.onConfirmSleep
+    ISWorldObjectContextMenu.onConfirmSleep = function(this, button, player, bed, ...)
+        print("[SleepDebug] onConfirmSleep button=" .. (button and tostring(button.internal) or "nil"))
+        -- WHY the walk silently aborts: vanilla bails with NO log when the player isn't
+        -- adjacent AND AdjacentFreeTileFinder.Find(bed) returns nil. Log both so we KNOW.
+        if button and button.internal == "YES" then
+            local p = getSpecificPlayer(player)
+            local bsq = nil; pcall(function() bsq = bed and bed:getSquare() end)
+            if p and bsq then
+                local psq = p:getCurrentSquare()
+                local adj, found = "?", "?"
+                pcall(function() adj = tostring(AdjacentFreeTileFinder.isTileOrAdjacent(psq, bsq)) end)
+                pcall(function() found = tostring(AdjacentFreeTileFinder.Find(bsq, p)) end)
+                print("[SleepDebug]   bed-walk gate: isTileOrAdjacent=" .. adj .. " Find=" .. found)
+            end
+        end
+        return origConfirm(this, button, player, bed, ...)
+    end
+
+    -- 3) Arrived at bed -> the actual sleep trigger and all its guard checks
+    local origWalk = ISWorldObjectContextMenu.onSleepWalkToComplete
+    ISWorldObjectContextMenu.onSleepWalkToComplete = function(player, bed, ...)
+        local p = getSpecificPlayer(player)
+        if p then
+            local st = p:getStats()
+            print("[SleepDebug] WalkToComplete ENTER"
+                .. " zVis=" .. st:getNumVisibleZombies()
+                .. " zChase=" .. st:getNumChasingZombies()
+                .. " zClose=" .. st:getNumVeryCloseZombies()
+                .. " pain=" .. p:getMoodles():getMoodleLevel(MoodleType.Pain)
+                .. " panic=" .. p:getMoodles():getMoodleLevel(MoodleType.Panic)
+                .. " fatigue=" .. st:getFatigue()
+                .. " exerciseEnded=" .. tostring(p:getVariableBoolean("ExerciseEnded"))
+                .. " tablet=" .. p:getSleepingTabletEffect()
+                .. " asleepBefore=" .. tostring(p:isAsleep()))
+        end
+        local r = origWalk(player, bed, ...)
+        if p then
+            print("[SleepDebug] WalkToComplete EXIT asleepAfter=" .. tostring(p:isAsleep()))
+        end
+        return r
+    end
+
+    print("[SleepDebug] Hooks applied.")
+end
+
+-- ===== EmpireWalkDiag() =====
+-- Run from the debug console (or bind a key) while standing where walk-to fails. Tells us
+-- the ONE thing the logs can't: is the PLAYER boxed in (all neighbors blocked -> every
+-- pathfind/walk-to dies, the unifying cause) or is it target-specific (player has free
+-- neighbors, only the bed/build spot is jammed). Also dumps the action-queue head in case
+-- a stuck action is the real blocker.
+function EmpireWalkDiag()
+    local p = getSpecificPlayer(0)
+    if not p then print("[WalkDiag] no player"); return end
+    local sq = p:getCurrentSquare()
+    if not sq then print("[WalkDiag] no square"); return end
+    local cell = getCell()
+    print(string.format("[WalkDiag] player @ %d,%d,%d", sq:getX(), sq:getY(), sq:getZ()))
+
+    -- action queue state (a stuck head action blocks every queued walk behind it)
+    local qlen, qhead = "?", "-"
+    pcall(function()
+        local q = ISTimedActionQueue.getTimedActionQueue(p)
+        if q and q.queue then
+            qlen = #q.queue
+            if q.queue[1] then qhead = tostring(q.queue[1].Type or q.queue[1].name or "?") end
+        end
+    end)
+    print("[WalkDiag] timedActionQueue len=" .. tostring(qlen) .. " head=" .. tostring(qhead))
+
+    -- 8 neighbours: can the character stand there? all false = boxed in.
+    local dirs = { {1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1} }
+    local free = 0
+    for _, d in ipairs(dirs) do
+        local n = cell:getGridSquare(sq:getX()+d[1], sq:getY()+d[2], sq:getZ())
+        local ok = false
+        if n then pcall(function() ok = n:isFree(false) end) end
+        print(string.format("[WalkDiag]   nb %+d,%+d free=%s", d[1], d[2], tostring(ok)))
+        if ok then free = free + 1 end
+    end
+    print("[WalkDiag] FREE NEIGHBORS = " .. free .. "/8   (0 = you are boxed in)")
+
+    -- the exact function vanilla sleep/build/etc. rely on, aimed at the player's own tile
+    local found = nil
+    pcall(function() found = AdjacentFreeTileFinder.Find(sq, p) end)
+    print("[WalkDiag] AdjacentFreeTileFinder.Find(playerSquare) = " .. tostring(found))
+end
+
+Events.OnGameStart.Add(applyHooks)
+
+-- Press F7 wherever right-click "Walk to" (or sleep/build/disassemble) fails, to dump the
+-- boxed-in diagnostic to console. "FREE NEIGHBORS = 0/8" means you're walled in on every
+-- side -> every pathfind dies -> that's the root cause. Fires with or without debug mode.
+Events.OnKeyPressed.Add(function(key)
+    if key == Keyboard.KEY_F7 then pcall(EmpireWalkDiag) end
+end)

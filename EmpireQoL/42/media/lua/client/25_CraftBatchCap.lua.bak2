@@ -1,0 +1,55 @@
+-- Empire QoL - Craft Batch Sizes -- v2
+-- Vanilla crafting only offers "make 1" or "make max". With Smart Craft feeding the whole
+-- base in, "make max" on a smelting recipe runs hundreds/thousands of crafts and CRASHES
+-- (the ammo-smelting recipes choke past a point). This turns the "Craft All" button into a
+-- quick batch picker -- 10 / 20 / 30 / 40 / Max -- and hard-caps even "Max" to a crash-safe
+-- number. Pick a size and it crafts exactly that many, or until materials run out.
+
+local BATCHES = { 10, 20, 30, 40 }   -- the quick sizes offered on the picker
+local MAX_CAP = 100                  -- "Max" is capped to this (well under the crash threshold)
+
+local function install()
+    if type(ISCraftingUI) ~= "table" or not ISCraftingUI.craft
+       or not ISCraftingUI.onCraftComplete or not ISCraftingUI.craftAll then
+        print("[EmpireQoL] Craft Batch Sizes: ISCraftingUI missing, not hooked.")
+        return
+    end
+
+    local origCraft = ISCraftingUI.craft
+
+    -- craft exactly n times: starts vanilla's repeat-chain, stopped at n by the cap below
+    function ISCraftingUI:craftBatch(n)
+        self.__empireTarget = n
+        self.__empireCount = 0
+        return origCraft(self, nil, true)
+    end
+
+    -- the "Craft All" button now opens a batch-size picker instead of blindly maxing out
+    function ISCraftingUI:craftAll()
+        local menu = ISContextMenu.get(self.playerNum, getMouseX() + 10, getMouseY() + 10)
+        if not menu then return end
+        for _, n in ipairs(BATCHES) do
+            menu:addOption("Make " .. n, self, ISCraftingUI.craftBatch, n)
+        end
+        menu:addOption("Make max (capped " .. MAX_CAP .. ")", self, ISCraftingUI.craftBatch, MAX_CAP)
+    end
+
+    -- stop any repeat-chain once it hits its target count (this is what prevents the crash)
+    local origOCC = ISCraftingUI.onCraftComplete
+    function ISCraftingUI:onCraftComplete(completedAction, recipe, container, containers)
+        local target = self.__empireTarget or MAX_CAP
+        local n = (self.__empireCount or 0) + 1
+        self.__empireCount = n
+        if n >= target then
+            self.__empireCount = 0
+            self.__empireTarget = nil
+            pcall(function() self:refresh() end)   -- end the chain cleanly
+            return
+        end
+        return origOCC(self, completedAction, recipe, container, containers)
+    end
+
+    print("[EmpireQoL] Craft Batch Sizes v2 loaded. 'Craft All' offers 10/20/30/40/max (max capped at " .. MAX_CAP .. " to prevent the smelting crash).")
+end
+
+Events.OnGameStart.Add(install)

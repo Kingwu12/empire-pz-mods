@@ -1,0 +1,188 @@
+-- Empire QoL :: 33_CraftN.lua -- v2 -- numbered + instant batch crafting (single authority)
+-- WHY v2: craft buttons freeze their click-action when the window is first built, so
+-- overriding ISCraftingUI:craftAll on the class never reached the actual button -- it kept
+-- running the old animated one-at-a-time chain. v2 fixes the live window every frame: it
+-- force-adds a "Craft N" button and re-points "Craft All" at an INSTANT crafter that calls
+-- the engine's own RecipeManager.PerformMakeItem directly (no timed action, no animation),
+-- in small per-frame chunks so a huge batch can't one-frame-crash the smelting mod.
+
+EmpireCraft = EmpireCraft or {}
+EmpireCraft.jobs = EmpireCraft.jobs or {}
+
+local CHUNK   = 20     -- crafts per frame (instant feel, but not all-in-one-frame). Raise for faster, lower if smelting ever hiccups.
+local MAX_CAP = 1000   -- hard safety cap on a single batch
+
+-- PerformMakeItem CREATES the result item but does NOT place it -- the caller must, exactly
+-- like vanilla ISCraftAction:perform does. Without this, every crafted item evaporates.
+function EmpireCraft.placeResult(recipe, resultItem, char)
+    if not resultItem or not char then return end
+    local inv = char:getInventory()
+    if not inv then return end
+    local cnt = 1
+    pcall(function() cnt = recipe:getResult():getCount() end)
+    if cnt and cnt > 1 then
+        -- multi-output recipe: vanilla adds `count` fresh items by type
+        pcall(function() inv:AddItems(resultItem:getFullType(), cnt) end)
+    else
+        -- single output: add to inventory, drop on the ground if it won't fit
+        pcall(function() inv:AddItem(resultItem) end)
+        local over = false
+        pcall(function() over = inv:getCapacityWeight() > inv:getEffectiveCapacity(char) end)
+        if over then
+            pcall(function()
+                inv:Remove(resultItem)
+                local sq = char:getCurrentSquare()
+                if sq then sq:AddWorldInventoryItem(resultItem, 0, 0, 0) end
+            end)
+        end
+    end
+end
+
+-- drain the active batch a chunk at a time
+local function processJobs()
+    local job = EmpireCraft.jobs[1]
+    if not job then return end
+    local recipe, char, containers = job.recipe, job.char, job.containers
+    local n = 0
+    while n < CHUNK and job.remaining > 0 do
+        local valid = false
+        pcall(function() valid = RecipeManager.IsRecipeValid(recipe, char, nil, containers) end)
+        if not valid then job.remaining = 0; break end
+        local needed = nil
+        pcall(function() needed = RecipeManager.getAvailableItemsNeeded(recipe, char, containers, nil, nil) end)
+        if not needed or needed:isEmpty() then job.remaining = 0; break end
+        local ok = pcall(function()
+            local result = RecipeManager.PerformMakeItem(recipe, needed:get(0), char, containers)
+            EmpireCraft.placeResult(recipe, result, char)
+        end)
+        if not ok then job.remaining = 0; break end
+        job.crafted = job.crafted + 1
+        job.remaining = job.remaining - 1
+        n = n + 1
+    end
+    if job.remaining <= 0 then
+        table.remove(EmpireCraft.jobs, 1)
+        pcall(function() if EmpireBaseCache then EmpireBaseCache.invalidate() end end)
+        pcall(function() if job.ui and job.ui.refresh then job.ui:refresh() end end)
+        pcall(function() ISInventoryPage.dirtyUI() end)
+        if job.crafted > 0 then
+            local p = getSpecificPlayer(0)
+            if p and HaloTextHelper then pcall(function()
+                HaloTextHelper.addTextWithArrow(p, "Crafted " .. job.crafted, "[br/]", false, HaloTextHelper.getColorGreen())
+            end) end
+        end
+    end
+end
+
+-- start an instant batch of `count` from the currently selected recipe
+local function startBatch(ui, count)
+    count = tonumber(count); if not count or count < 1 then return end
+    count = math.min(math.floor(count), MAX_CAP)
+    local rlb = ui:getRecipeListBox()
+    local sel = rlb and rlb.items and rlb.selected and rlb.items[rlb.selected]
+    local selectedItem = sel and sel.item
+    if not selectedItem or selectedItem.evolved then return end
+    table.insert(EmpireCraft.jobs, {
+        ui = ui, recipe = selectedItem.recipe, char = ui.character,
+        containers = ui.containerList, remaining = count, crafted = 0,
+    })
+end
+
+-- live-window decoration: runs every render on the ACTUAL window instance, so it works no
+-- matter when/how the window was built. Force-adds Craft N, re-points Craft All to instant.
+local function decorate(ui)
+    if ui.isCollapsed then
+        if ui.empireCraftNButton then ui.empireCraftNButton:setVisible(false) end
+        return
+    end
+    -- re-point Craft All at the instant crafter (idempotent)
+    if ui.craftAllButton and ui.craftAllButton.onclick ~= ISCraftingUI.empireInstantAll then
+        ui.craftAllButton.onclick = ISCraftingUI.empireInstantAll
+        ui.craftAllButton.target = ui
+    end
+    -- lazily create the Craft N button on the live window if missing
+    if not ui.empireCraftNButton then
+        local b = ISButton:new(0, 0, 60, 25, "Craft N", ui, ISCraftingUI.empirePromptCraftN)
+        b:initialise(); b:instantiate(); b:setWidthToTitle()
+        ui:addChild(b)
+        ui.empireCraftNButton = b
+    end
+    local rlb = ui:getRecipeListBox()
+    local sel = rlb and rlb.items and rlb.selected and rlb.items[rlb.selected]
+    local selectedItem = sel and sel.item
+    if not selectedItem or selectedItem.evolved or not ui.craftAllButton then
+        ui.empireCraftNButton:setVisible(false)
+        return
+    end
+    ui.empireCraftNButton:setVisible(true)
+    ui.empireCraftNButton:setX(ui.craftAllButton:getRight() + 5)
+    ui.empireCraftNButton:setY(ui.craftAllButton:getY())
+    ui.empireCraftNButton.enable = selectedItem.available and not ui.character:isDriving()
+end
+EmpireCraft.decorate = decorate
+EmpireCraft.startBatch = startBatch
+
+local function install()
+    if not ISCraftingUI or not ISCraftingUI.render then
+        print("[EmpireQoL] Craft N v2: ISCraftingUI missing, not hooked.")
+        return
+    end
+
+    -- Craft All -> instant max (capped). Bound to the button by decorate(), and to the key here.
+    function ISCraftingUI:empireInstantAll(button)
+        local rlb = self:getRecipeListBox()
+        local sel = rlb and rlb.items and rlb.selected and rlb.items[rlb.selected]
+        local selectedItem = sel and sel.item
+        if not selectedItem or selectedItem.evolved then return end
+        local maxN = 1
+        pcall(function()
+            maxN = RecipeManager.getNumberOfTimesRecipeCanBeDone(selectedItem.recipe, self.character, self.containerList, nil) or 1
+        end)
+        EmpireCraft.startBatch(self, maxN)
+    end
+
+    -- Craft N -> ask how many, then instant batch
+    function ISCraftingUI:empirePromptCraftN(button)
+        local rlb = self:getRecipeListBox()
+        local sel = rlb and rlb.items and rlb.selected and rlb.items[rlb.selected]
+        local selectedItem = sel and sel.item
+        if not selectedItem then return end
+        local maxN = 1
+        pcall(function()
+            maxN = RecipeManager.getNumberOfTimesRecipeCanBeDone(selectedItem.recipe, self.character, self.containerList, nil) or 1
+        end)
+        local modal = ISTextBox:new(0, 0, 290, 130, "How many to craft?  (max " .. tostring(maxN) .. ")",
+            tostring(maxN), self, ISCraftingUI.empireOnCraftNModal, self.playerNum)
+        modal:initialise()
+        modal:addToUIManager()
+        pcall(function() modal:setOnlyNumbers(true) end)
+        pcall(function() if modal.entry then modal.entry:setMaxTextLength(7) end end)
+    end
+
+    function ISCraftingUI:empireOnCraftNModal(button)
+        if button and button.internal == "OK" then
+            local n = tonumber(button.parent.entry:getText())
+            if n and n >= 1 then EmpireCraft.startBatch(self, n) end
+        end
+    end
+
+    -- keyboard "Craft All" path goes instant too
+    ISCraftingUI.craftAll = function(self) self:empireInstantAll() end
+
+    -- decorate the live window every frame (force button + rebind)
+    local origRender = ISCraftingUI.render
+    ISCraftingUI.render = function(self)
+        origRender(self)
+        pcall(function() EmpireCraft.decorate(self) end)
+    end
+
+    -- drain batches a chunk per tick
+    if not EmpireCraft.tickHooked then
+        EmpireCraft.tickHooked = true
+        Events.OnTick.Add(function() if #EmpireCraft.jobs > 0 then pcall(processJobs) end end)
+    end
+
+    print("[EmpireQoL] Craft N v2 loaded. 'Craft N' button + instant Craft All (chunked, no animation).")
+end
+
+Events.OnGameStart.Add(install)

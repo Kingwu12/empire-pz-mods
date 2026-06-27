@@ -1,0 +1,212 @@
+-- Empire QoL - Debug & Profiler (EmpireDebug)
+-- F11 = full state dump to console.  F10 = toggle live logging on/off.
+-- Auto-logs: right-click menu build time (which menu + how many ms + option count)
+--            and the full barricade action lifecycle (so we SEE why it dies on plank N).
+-- All output -> console.txt, tagged [EMPIRE-DEBUG]. Nothing here changes gameplay.
+
+EMPIRE_DEBUG_ON = false           -- master switch (F10 flips it live)
+local MENU_MS_THRESHOLD = 20      -- only log menu builds slower than this (ms)
+
+local function ts() return getTimestampMs() end
+
+local function curSpeed()
+    local ok, sc = pcall(function() return UIManager.getSpeedControls() end)
+    if ok and sc then return sc:getCurrentGameSpeed() end
+    return -1
+end
+
+local function itype(item)
+    if not item then return "nil" end
+    local ok, t = pcall(function() return item:getType() end)
+    if ok then return t end
+    return "?"
+end
+
+-- ============ RIGHT-CLICK MENU PROFILER ============
+local function optCount(ctx)
+    local n = "?"
+    pcall(function() if ctx and ctx.options then n = #ctx.options end end)
+    return n
+end
+
+local origInvMenu = ISInventoryPaneContextMenu.createMenu
+ISInventoryPaneContextMenu.createMenu = function(...)
+    local t0 = ts()
+    local ret = origInvMenu(...)
+    local dt = ts() - t0
+    if EMPIRE_DEBUG_ON and dt >= MENU_MS_THRESHOLD then
+        print("[EMPIRE-DEBUG] INV menu build: " .. dt .. "ms  options=" .. optCount(ret))
+    end
+    return ret
+end
+
+local origWorldMenu = ISWorldObjectContextMenu.createMenu
+ISWorldObjectContextMenu.createMenu = function(player, worldobjects, x, y, test, ...)
+    local t0 = ts()
+    local ret = origWorldMenu(player, worldobjects, x, y, test, ...)
+    local dt = ts() - t0
+    if EMPIRE_DEBUG_ON and dt >= MENU_MS_THRESHOLD then
+        local nObjs = 0
+        pcall(function() if worldobjects then nObjs = (worldobjects.size and worldobjects:size()) or #worldobjects end end)
+        local invTop, invRec = "?", "?"
+        pcall(function()
+            local pnum = (type(player) == "number") and player or 0
+            local p = getSpecificPlayer(pnum)
+            if p then
+                local items = p:getInventory():getItems()
+                invTop = tostring(items:size())
+                local total = items:size()
+                for i = 0, items:size() - 1 do
+                    local it = items:get(i)
+                    if it and instanceof(it, "InventoryContainer") and it:getInventory() then
+                        total = total + it:getInventory():getItems():size()
+                    end
+                end
+                invRec = tostring(total)
+            end
+        end)
+        print("[EMPIRE-DEBUG] WORLD menu build: " .. dt .. "ms  options=" .. optCount(ret)
+            .. "  worldObjs=" .. nObjs .. "  invTop=" .. invTop .. "  invRecurse=" .. invRec)
+    end
+    return ret
+end
+
+-- ============ BARRICADE LIFECYCLE LOGGER ============
+local function whyInvalid(self)
+    -- Log the RAW value of every condition isValid() checks, so we see exactly which one fails.
+    local parts = {}
+    pcall(function()
+        local c, it = self.character, self.item
+        parts[#parts+1] = "barricadeAble=" .. tostring(instanceof(it, "BarricadeAble"))
+        local oi = "?"; pcall(function() oi = tostring(it:getObjectIndex()) end)
+        parts[#parts+1] = "objIndex=" .. oi
+        local b = nil; pcall(function() b = it:getBarricadeForCharacter(c) end)
+        if b then
+            local cap = "?"; pcall(function() cap = tostring(b:canAddPlank()) end)
+            parts[#parts+1] = "existBarricade=yes(canAddPlank=" .. cap .. ")"
+        else
+            parts[#parts+1] = "existBarricade=no"
+        end
+        parts[#parts+1] = "hammer=" .. tostring(c:hasEquippedTag("Hammer"))
+        parts[#parts+1] = "plank=" .. tostring(c:hasEquipped("Plank"))
+        local nails = "?"; pcall(function() nails = tostring(c:getInventory():getItemCount("Base.Nails", true)) end)
+        parts[#parts+1] = "nails=" .. nails
+        parts[#parts+1] = "isStarted=" .. tostring(self.isStarted)
+        local op = "n/a"; pcall(function()
+            if instanceof(it, "IsoDoor") or (instanceof(it, "IsoThumpable") and it:isDoor()) then op = tostring(it:IsOpen()) end
+        end)
+        parts[#parts+1] = "doorOpen=" .. op
+    end)
+    if #parts == 0 then return "diag-error" end
+    return table.concat(parts, "  ")
+end
+
+local origNew = ISBarricadeAction.new
+function ISBarricadeAction:new(character, item, isMetal, isMetalBar, time)
+    local o = origNew(self, character, item, isMetal, isMetalBar, time)
+    if EMPIRE_DEBUG_ON then
+        print("[EMPIRE-DEBUG] >> barricade QUEUED  speed=" .. curSpeed()
+            .. "  plankEquipped=" .. tostring(character:hasEquipped("Plank"))
+            .. "  hammerEquipped=" .. tostring(character:hasEquippedTag("Hammer")))
+    end
+    return o
+end
+
+local origValid = ISBarricadeAction.isValid
+function ISBarricadeAction:isValid()
+    local ok = origValid(self)
+    if EMPIRE_DEBUG_ON and not ok and not self._empLogged then
+        self._empLogged = true
+        print("[EMPIRE-DEBUG] !! barricade isValid=FALSE  why=[" .. whyInvalid(self) .. "]  speed=" .. curSpeed())
+    end
+    return ok
+end
+
+local origStart = ISBarricadeAction.start
+function ISBarricadeAction:start()
+    if EMPIRE_DEBUG_ON then print("[EMPIRE-DEBUG] -- barricade START  speed=" .. curSpeed()) end
+    return origStart(self)
+end
+
+local origPerform = ISBarricadeAction.perform
+function ISBarricadeAction:perform()
+    if EMPIRE_DEBUG_ON then
+        print("[EMPIRE-DEBUG] ++ barricade PERFORM (plank placed)  speed=" .. curSpeed()
+            .. "  secondary=" .. itype(self.character:getSecondaryHandItem()))
+    end
+    return origPerform(self)
+end
+
+local origStop = ISBarricadeAction.stop
+function ISBarricadeAction:stop()
+    if EMPIRE_DEBUG_ON then print("[EMPIRE-DEBUG] xx barricade STOP/interrupted  speed=" .. curSpeed()) end
+    return origStop(self)
+end
+
+-- ============ F11 STATE DUMP ============
+local function dumpState()
+    local ok = pcall(function()
+        local p = getSpecificPlayer(0)
+        if not p then print("[EMPIRE-DEBUG] no player") return end
+        print("========== [EMPIRE-DEBUG] STATE DUMP ==========")
+        print(" pos " .. math.floor(p:getX()) .. "," .. math.floor(p:getY()) .. "," .. math.floor(p:getZ())
+            .. "  speed=" .. curSpeed() .. "  inVehicle=" .. tostring(p:getVehicle() ~= nil) .. "  aiming=" .. tostring(p:isAiming()))
+        local st = p:getStats()
+        print(string.format(" hunger=%.2f thirst=%.2f  chasingZ=%d closeZ=%d",
+            st:getHunger(), st:getThirst(), st:getNumChasingZombies(), st:getNumVeryCloseZombies()))
+        print(" primary=" .. itype(p:getPrimaryHandItem()) .. "  secondary=" .. itype(p:getSecondaryHandItem()))
+        -- action queue
+        local qn, names = 0, {}
+        pcall(function()
+            local q = ISTimedActionQueue.getTimedActionQueue(p)
+            if q and q.queue then
+                qn = #q.queue
+                for i = 1, math.min(qn, 10) do
+                    local a = q.queue[i]
+                    table.insert(names, (a and a.Type) or "?")
+                end
+            end
+        end)
+        print(" actionQueue(" .. qn .. "): " .. table.concat(names, " > "))
+        -- nearby containers
+        local cont = 0
+        pcall(function()
+            local cell = getCell()
+            local px, py, pz = math.floor(p:getX()), math.floor(p:getY()), math.floor(p:getZ())
+            for dx = -5, 5 do for dy = -5, 5 do
+                local sq = cell:getGridSquare(px + dx, py + dy, pz)
+                if sq and sq:getObjects() then
+                    local objs = sq:getObjects()
+                    for oi = 0, objs:size() - 1 do
+                        local o = objs:get(oi)
+                        if o and o.getContainer and o:getContainer() then cont = cont + 1 end
+                    end
+                end
+            end end
+        end)
+        print(" nearbyContainers(r5): " .. cont)
+        print(" empireGlobals: EmpireSortAll=" .. tostring(_G["EmpireSortAll"] ~= nil)
+            .. " EmpireLoot=" .. tostring(_G["EmpireLoot"] ~= nil))
+        print("===============================================")
+        pcall(function() HaloTextHelper.addTextWithArrow(p, "Debug dumped to console", "[br/]", false, HaloTextHelper.getColorGreen()) end)
+    end)
+    if not ok then print("[EMPIRE-DEBUG] dump error") end
+end
+
+-- ============ HOTKEYS ============
+local function onKeyPressed(key)
+    if key == Keyboard.KEY_INSERT then   -- moved off F11 to free it for Find Item
+        pcall(dumpState)
+    elseif key == Keyboard.KEY_F10 then
+        EMPIRE_DEBUG_ON = not EMPIRE_DEBUG_ON
+        local p = getSpecificPlayer(0)
+        if p then pcall(function()
+            HaloTextHelper.addText(p, "Empire debug logging: " .. (EMPIRE_DEBUG_ON and "ON" or "OFF"),
+                EMPIRE_DEBUG_ON and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorRed())
+        end) end
+        print("[EMPIRE-DEBUG] logging toggled " .. (EMPIRE_DEBUG_ON and "ON" or "OFF"))
+    end
+end
+Events.OnKeyPressed.Add(onKeyPressed)
+
+print("[EmpireQoL] Debug & Profiler loaded. Insert=state dump, F10=toggle logging. Menu+barricade auto-logged to console.txt.")

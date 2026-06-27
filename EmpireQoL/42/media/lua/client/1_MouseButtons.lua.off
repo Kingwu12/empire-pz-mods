@@ -1,0 +1,49 @@
+-- Empire QoL - Mouse Side Buttons
+-- Your Logitech thumb buttons already send F6 (forward) and F7 (back).
+--   F6 (forward) = toggle game speed 1x <-> 3x   (fast-forward on demand)
+--   F7 (back)    = open / close the inventory + loot window
+-- Features that used to sit on F6/F7 were moved so nothing double-fires:
+--   Vacuum -> F1 , Skip Ahead -> F2 , Loot Filter -> F3
+
+local SPEED_KEY = Keyboard.KEY_F6
+local INV_KEY   = Keyboard.KEY_F7
+
+local function toggle3x()
+    local player = getSpecificPlayer(0)
+    -- PZ drives real sim speed with BOTH setGameSpeed (the button) AND
+    -- getGameTime():setMultiplier (the actual clock). setGameSpeed alone only moves the
+    -- button. setGameSpeed 3 == "Fast Forward x2" == multiplier 20 (vanilla mapping).
+    if getGameSpeed() == 3 then
+        setGameSpeed(1)
+        getGameTime():setMultiplier(1)
+        if player then pcall(function() HaloTextHelper.addTextWithArrow(player, "Speed 1x", "[br/]", false, HaloTextHelper.getColorWhite()) end) end
+    else
+        setGameSpeed(3)
+        getGameTime():setMultiplier(20)
+        if player then pcall(function() HaloTextHelper.addTextWithArrow(player, "Speed 3x", "[br/]", false, HaloTextHelper.getColorGreen()) end) end
+    end
+end
+
+local function toggleInv()
+    -- Use the global accessors (what vanilla's own "Toggle Inventory" keybind uses).
+    -- ISInventoryPage.toggleInventory() relies on a nil field and crashes -- don't use it.
+    pcall(function()
+        local inv = getPlayerInventory(0)
+        if not inv then return end
+        local show = not inv:getIsVisible()
+        inv:setVisible(show)
+        local loot = getPlayerLoot(0)
+        if loot then loot:setVisible(show) end
+    end)
+end
+
+local function onKeyPressed(key)
+    if key == SPEED_KEY then
+        pcall(toggle3x)
+    elseif key == INV_KEY then
+        toggleInv()
+    end
+end
+Events.OnKeyPressed.Add(onKeyPressed)
+
+print("[EmpireQoL] Mouse Side Buttons loaded: F6=toggle 3x speed (real clock), F7=toggle inventory window.")

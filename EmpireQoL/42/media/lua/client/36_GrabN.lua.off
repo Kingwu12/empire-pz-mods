@@ -1,0 +1,122 @@
+-- Empire QoL :: 36_GrabN.lua
+-- Storage only gives you Grab one / half / all. This adds "Grab N..." -- a numbered grab
+-- that mirrors Craft N: pick a number, pull exactly that many of the item into your bags.
+-- Moves up to N items into your bags in ONE batched action (walk once, then transfer) so a
+-- big grab can't lose items and can't flood the action queue with hundreds of transfers.
+require "TimedActions/ISBaseTimedAction"
+
+local function grabbableCount(items)
+    local total = 0
+    for _, k in ipairs(items) do
+        if not instanceof(k, "InventoryItem") then
+            total = total + math.max(0, (#k.items - 1))   -- k.items[1] is a dummy duplicate
+        else
+            total = total + 1
+        end
+    end
+    return total
+end
+-- One batched move action: walk once, then move up to N items straight into your bags in a
+-- SINGLE action. The old version queued one vanilla transfer action PER item, so grabbing 200
+-- rounds meant 200 queued actions + 200 inventory-UI rebuilds -- that's what dropped you to 30fps.
+local GrabNBatch = ISBaseTimedAction:derive("GrabNBatch")
+function GrabNBatch:isValid() return true end
+function GrabNBatch:update() end
+function GrabNBatch:perform()
+    pcall(function()
+        local moved = 0
+        for _, it in ipairs(self.toGrab) do
+            if moved >= self.n then break end
+            local src = it:getContainer()
+            if src and src ~= self.destInv then
+                local fits = true
+                pcall(function() fits = self.destInv:hasRoomFor(self.character, it) end)
+                if fits then
+                    src:Remove(it)
+                    self.destInv:addItem(it)
+                    moved = moved + 1
+                end
+            end
+        end
+    end)
+    ISBaseTimedAction.perform(self)   -- pop the action off the queue
+end
+function GrabNBatch:new(character, toGrab, destInv, n)
+    local o = ISBaseTimedAction.new(self, character)
+    o.toGrab  = toGrab
+    o.destInv = destInv
+    o.n       = n
+    o.maxTime = 1            -- effectively instant: ONE action, not N
+    o.stopOnWalk = false
+    o.stopOnRun  = false
+    return o
+end
+
+-- Flatten the right-click selection into real item instances (capped at N), walk to the
+-- container once (like vanilla Grab), then queue the single batched move.
+local function doGrabN(items, player, n)
+    local playerObj = getSpecificPlayer(player)
+    if not playerObj then return end
+    local playerInv = playerObj:getInventory()
+    local toGrab, srcContainer = {}, nil
+    for _, k in ipairs(items) do
+        if #toGrab >= n then break end
+        if not instanceof(k, "InventoryItem") then
+            local count = #k.items - 1
+            for i2 = 1, count do
+                if #toGrab >= n then break end
+                local it = k.items[i2 + 1]
+                if it and it:getContainer() ~= playerInv then
+                    toGrab[#toGrab+1] = it
+                    srcContainer = srcContainer or it:getContainer()
+                end
+            end
+        elseif k:getContainer() ~= playerInv then
+            toGrab[#toGrab+1] = k
+            srcContainer = srcContainer or k:getContainer()
+        end
+    end
+    if #toGrab == 0 then return end
+    if srcContainer and not luautils.walkToContainer(srcContainer, player) then return end
+    ISTimedActionQueue.add(GrabNBatch:new(playerObj, toGrab, playerInv, n))
+end
+-- ISTextBox calls back as onclick(target, button, ...). target carries items+player.
+local function onGrabNConfirm(ctx, button)
+    if not (ctx and button and button.internal == "OK") then return end
+    local n = tonumber(button.parent.entry:getText())
+    if n and n >= 1 then doGrabN(ctx.items, ctx.player, math.floor(n)) end
+end
+
+local function promptGrabN(items, player)
+    local maxN = grabbableCount(items)
+    if maxN < 1 then return end
+    local ctx = { items = items, player = player }
+    local modal = ISTextBox:new(0, 0, 300, 130,
+        "Grab how many?  (max " .. tostring(maxN) .. ")", tostring(maxN),
+        ctx, onGrabNConfirm, player)
+    modal:initialise()
+    modal:addToUIManager()
+    pcall(function() modal:setOnlyNumbers(true) end)
+    pcall(function() if modal.entry then modal.entry:setMaxTextLength(7) end end)
+end
+
+-- Add "Grab N..." to the right-click menu, right after vanilla's Grab options.
+local function install()
+    if not ISInventoryPaneContextMenu or not ISInventoryPaneContextMenu.doGrabMenu then
+        print("[EmpireQoL] Grab N: doGrabMenu missing, not hooked.")
+        return
+    end
+    local orig = ISInventoryPaneContextMenu.doGrabMenu
+    ISInventoryPaneContextMenu.doGrabMenu = function(context, items, player)
+        orig(context, items, player)
+        local ok = pcall(function()
+            if grabbableCount(items) >= 2 then
+                context:addOption(getText("ContextMenu_Grab") .. " N...", items, promptGrabN, player)
+            end
+        end)
+        if not ok then end
+    end
+    print("[EmpireQoL] Grab N loaded (storage right-click -> Grab N...).")
+end
+
+Events.OnGameStart.Add(install)

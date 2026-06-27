@@ -1,0 +1,271 @@
+-- Empire NPC - Auto Garrison v3 (Equip & Deploy)
+-- Auto-assigns a role to every base survivor, ARMS them (gun + ammo + backup melee), DRESSES
+-- them in military kit, and DEPLOYS them to their job via SSC's own order system -- then keeps
+-- them on the job instead of letting them idle/shuffle.
+-- v3 vs v2: everyone (not just guards) is armed + dressed; jobs actually run via SurvivorOrder;
+-- the old destructive "pin" (cleared tasks every few seconds, only set a mode flag) is GONE --
+-- that is why nobody did their job. Arm/dress happen ONCE per survivor (flagged), no dupes.
+-- Companions are skipped for deploy (7_Survival handles them) but still armed & dressed.
+-- Built on SSC primitives: giveWeapon, WearThis, SurvivorOrder. All pcall'd.
+
+require "EmpireNPC_Shared"
+
+local R = EmpireNPC.Roles
+
+local GARRISON_ENABLED = true
+local ASSIGN_INTERVAL  = 1500
+local DEPLOY_INTERVAL  = 300
+local THREAT_RADIUS    = 15
+local FOOD_LOW         = 8
+local SCAN_R           = 12
+
+local LADDER = { R.GUARD, R.LOOTER, R.WARDEN, R.MEDIC, R.FARMER }
+
+local GUN_CHOICES = { "Base.Shotgun", "Base.VarmintRifle", "Base.HuntingRifle", "Base.Pistol" }
+
+local MILITARY_KIT = {
+    "Base.Tshirt_ArmyGreen",
+    "Base.Jacket_ArmyCamoGreen",
+    "Base.Trousers_CamoGreen",
+    "Base.Shoes_ArmyBoots",
+    "Base.Hat_Army",
+    "Base.Vest_BulletArmy",
+}
+
+local ROLE_ORDER = {
+    [R.GUARD]  = "Stand Ground",
+    [R.FARMER] = "Farming",
+    [R.LOOTER] = "Forage",
+    [R.WARDEN] = "Stand Ground",
+    [R.MEDIC]  = "Stand Ground",
+    [R.NONE]   = "Stand Ground",
+}
+
+local IDLE_TASKS = {
+    [""]=true, Idle=true, Wander=true, WanderInBase=true,
+    WanderInBuilding=true, WanderInArea=true,
+}
+
+local function isCompanion(ss)
+    local m; pcall(function() m = ss:getAIMode() end)
+    if m == "Follow" then return true end
+    local t; pcall(function() t = ss:getTaskManager():getCurrentTask() end)
+    if t == "Follow" then return true end
+    return false
+end
+EmpireNPC.isCompanion = isCompanion
+
+local function zombiesNear(char, radius)
+    local cell = getCell(); if not cell or not char then return false end
+    local cx, cy, cz = math.floor(char:getX()), math.floor(char:getY()), math.floor(char:getZ())
+    for dx = -radius, radius do
+        for dy = -radius, radius do
+            local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
+            if sq then
+                local mo = sq:getMovingObjects()
+                if mo then for i = 0, mo:size()-1 do if instanceof(mo:get(i), "IsoZombie") then return true end end end
+            end
+        end
+    end
+    return false
+end
+
+local function eachContainerNear(char, radius, fn)
+    local cell = getCell(); if not cell or not char then return end
+    local cx, cy, cz = math.floor(char:getX()), math.floor(char:getY()), math.floor(char:getZ())
+    for dx = -radius, radius do
+        for dy = -radius, radius do
+            local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
+            if sq then
+                local sobs = sq:getStaticMovingObjects()
+                if sobs then for i = 0, sobs:size()-1 do local c = sobs:get(i):getContainer(); if c then fn(c) end end end
+            end
+        end
+    end
+end
+
+local function countBaseFood(char)
+    local n = 0
+    eachContainerNear(char, SCAN_R, function(cont)
+        local items = cont:getItems()
+        for i = 0, items:size()-1 do if instanceof(items:get(i), "Food") then n = n + 1 end end
+    end)
+    return n
+end
+
+local function announce(text, good)
+    local p = getSpecificPlayer(0); if not p then return end
+    pcall(function()
+        HaloTextHelper.addText(p, text, good and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorYellow())
+    end)
+end
+
+local function alreadyArmed(ss, char)
+    local has = false
+    pcall(function() if ss.getGunWep and ss:getGunWep() then has = true end end)
+    if has then return true end
+    pcall(function()
+        local items = char:getInventory():getItems()
+        for i = 0, items:size()-1 do
+            local it = items:get(i)
+            if instanceof(it, "HandWeapon") and it:isAimedFirearm() then has = true; break end
+        end
+    end)
+    return has
+end
+
+local function equipSurvivor(ss, char, settler)
+    if alreadyArmed(ss, char) then settler.armed = true end
+    if not settler.armed then
+        local gun = GUN_CHOICES[ZombRand(#GUN_CHOICES) + 1]
+        if pcall(function() ss:giveWeapon(gun, true) end) then
+            settler.armed = true
+            announce((settler.name or "Survivor") .. " armed", true)
+        end
+    end
+    if not settler.dressed then
+        local any = false
+        for _, ft in ipairs(MILITARY_KIT) do
+            pcall(function() if ss:WearThis(ft) then any = true end end)
+        end
+        settler.dressed = true
+        if any then announce((settler.name or "Survivor") .. " kitted out", true) end
+    end
+end
+
+local function isIdle(ss)
+    local cur = ""
+    pcall(function() cur = ss:getTaskManager():getCurrentTask() or "" end)
+    return IDLE_TASKS[cur] == true
+end
+
+local function deployToJob(ss, char, settler)
+    if zombiesNear(char, THREAT_RADIUS) then return end
+    local role  = settler.role or R.NONE
+    local order = ROLE_ORDER[role] or "Stand Ground"
+    if settler.deployedOrder == order and not isIdle(ss) then return end
+    if pcall(function() SurvivorOrder(true, char, order, nil) end) then
+        settler.deployedOrder = order
+    end
+end
+
+local function buildPlan(n, needs)
+    local plan = {}
+    for i = 1, n do plan[i] = LADDER[i] or R.GUARD end
+    if needs.threat and n >= 2 then plan[2] = R.GUARD end
+    if needs.foodLow and not needs.threat and n >= 2 then plan[2] = R.LOOTER end
+    return plan
+end
+
+local function computeNeeds(baseSurvivors)
+    local threat = false
+    for _, ss in ipairs(baseSurvivors) do
+        local ch = ss:Get()
+        if ch and zombiesNear(ch, THREAT_RADIUS) then threat = true; break end
+    end
+    local food, ref = 0, baseSurvivors[1] and baseSurvivors[1]:Get()
+    if ref then food = countBaseFood(ref) end
+    return { threat = threat, foodLow = (food < FOOD_LOW), food = food }
+end
+
+local function getBaseSurvivors()
+    local out = {}
+    for _, ss in ipairs(EmpireNPC.getActiveSurvivors()) do
+        if not isCompanion(ss) then out[#out + 1] = ss end
+    end
+    return out
+end
+
+local function equipAll()
+    if not SSM then return end
+    for _, ss in ipairs(EmpireNPC.getActiveSurvivors()) do
+        local name = ss:getName()
+        if name and name ~= "" then
+            local ch = ss:Get()
+            if ch and not ch:isDead() then
+                local s = EmpireNPC.getSettler(name); s.name = name
+                pcall(equipSurvivor, ss, ch, s)
+            end
+        end
+    end
+end
+
+local function autoAssign()
+    if not SSM then return end
+    local base = getBaseSurvivors()
+    if #base == 0 then return end
+    local needs = computeNeeds(base)
+    local plan  = buildPlan(#base, needs)
+
+    local idx, changes = 1, 0
+    for _, ss in ipairs(base) do
+        local name = ss:getName()
+        if name and name ~= "" then
+            local s = EmpireNPC.getSettler(name); s.name = name
+            local ch = ss:Get()
+            local isManual = (s.role and s.role ~= R.NONE and not s.autoAssigned)
+            if not isManual then
+                local newRole = plan[idx] or R.GUARD
+                if s.role ~= newRole then
+                    s.role = newRole; changes = changes + 1
+                    announce(name .. " -> " .. newRole, true)
+                end
+                s.autoAssigned = true
+            end
+            if ch and not ch:isDead() then
+                pcall(equipSurvivor, ss, ch, s)
+                pcall(deployToJob, ss, ch, s)
+            end
+            idx = idx + 1
+        end
+    end
+
+    if needs.foodLow then
+        for _, ss in ipairs(base) do
+            local s = EmpireNPC.getSettler(ss:getName() or "")
+            if s and s.role == R.LOOTER and not s.onRun then
+                s.onRun = true; s.runReturnTick = 3600
+                announce((s.name or "Looter") .. " sent for food (base low)", true)
+                break
+            end
+        end
+    end
+
+    if changes > 0 then EmpireNPC.saveData() end
+    if EMPIRE_DEBUG_ON ~= false then
+        print(string.format("[EmpireGarrison] assign: base=%d threat=%s food=%d changes=%d",
+            #base, tostring(needs.threat), needs.food, changes))
+    end
+end
+
+local function deployPass()
+    if not SSM then return end
+    for _, ss in ipairs(getBaseSurvivors()) do
+        local name = ss:getName()
+        if name and name ~= "" then
+            local ch = ss:Get()
+            if ch and not ch:isDead() then
+                local s = EmpireNPC.getSettler(name); s.name = name
+                pcall(deployToJob, ss, ch, s)
+            end
+        end
+    end
+end
+
+local assignTick, deployTick = 0, 0
+local function onTick()
+    if not GARRISON_ENABLED then return end
+    assignTick = assignTick + 1
+    deployTick = deployTick + 1
+    if assignTick >= ASSIGN_INTERVAL then
+        assignTick, deployTick = 0, 0
+        pcall(equipAll)
+        pcall(autoAssign)
+    elseif deployTick >= DEPLOY_INTERVAL then
+        deployTick = 0
+        pcall(deployPass)
+    end
+end
+Events.OnTick.Add(onTick)
+
+print("[EmpireNPC] Auto Garrison v3 loaded (Equip & Deploy). Everyone armed + dressed military + deployed to jobs.")

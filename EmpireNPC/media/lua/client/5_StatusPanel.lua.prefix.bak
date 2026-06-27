@@ -1,0 +1,153 @@
+-- Empire NPC - Status Panel FIXED
+-- F10 opens empire dashboard with correct SSC survivor counting
+
+local panelOpen = false
+local PANEL_KEY = Keyboard.KEY_F10
+local RESOURCE_SCAN_RADIUS = 40
+
+local function scanResources()
+    local player = getSpecificPlayer(0)
+    if not player then return end
+    local px = math.floor(player:getX())
+    local py = math.floor(player:getY())
+    local pz = math.floor(player:getZ())
+    local food, ammo, meds, fuel = 0, 0, 0, 0
+
+    for x = px - RESOURCE_SCAN_RADIUS, px + RESOURCE_SCAN_RADIUS do
+        for y = py - RESOURCE_SCAN_RADIUS, py + RESOURCE_SCAN_RADIUS do
+            local sq = getCell():getGridSquare(x, y, pz)
+            if sq then
+                local objs = sq:getObjects()
+                for i = 0, objs:size() - 1 do
+                    local obj = objs:get(i)
+                    if obj and obj:getContainer() then
+                        local c = obj:getContainer()
+                        local items = c:getItems()
+                        for j = 0, items:size() - 1 do
+                            local item = items:get(j)
+                            if item then
+                                local cat = item:getCategory()
+                                if cat == "Food" or cat == "Drink" then food = food + 1
+                                elseif cat == "Ammo" then ammo = ammo + 1
+                                elseif cat == "Medical" then meds = meds + 1
+                                end
+                                local t = item:getType() or ""
+                                if string.find(t, "GasCan") and not string.find(t, "Empty") then
+                                    fuel = fuel + 1
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    EmpireNPC.stats.totalFood = food
+    EmpireNPC.stats.totalAmmo = ammo
+    EmpireNPC.stats.totalMeds = meds
+    EmpireNPC.stats.totalFuel = fuel
+end
+
+local function buildPanel()
+    local screenW = getCore():getScreenWidth()
+    local screenH = getCore():getScreenHeight()
+    local W, H = 420, 480
+    local X = (screenW - W) / 2
+    local Y = (screenH - H) / 2
+
+    pcall(scanResources)
+
+    -- Count settlers using correct SSC API
+    local settlerCount = 0
+    local guardCount, medicCount, wardenCount, farmerCount, looterCount = 0,0,0,0,0
+
+    if SSM and SSM.SuperSurvivors then
+        local count = SSM.SurvivorCount or 0
+        for i = 0, count + 1 do
+            local ss = SSM.SuperSurvivors[i]
+            if ss and not ss:isDead() then
+                settlerCount = settlerCount + 1
+                local name = ss:getName() or ""
+                if name ~= "" then
+                    local s = EmpireNPC.settlers[name]
+                    if s then
+                        local r = s.role
+                        if r == EmpireNPC.Roles.GUARD then guardCount = guardCount + 1
+                        elseif r == EmpireNPC.Roles.MEDIC then medicCount = medicCount + 1
+                        elseif r == EmpireNPC.Roles.WARDEN then wardenCount = wardenCount + 1
+                        elseif r == EmpireNPC.Roles.FARMER then farmerCount = farmerCount + 1
+                        elseif r == EmpireNPC.Roles.LOOTER then looterCount = looterCount + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local panel = ISPanel:new(X, Y, W, H)
+    panel:initialise()
+    panel:setTitle("EMPIRE STATUS")
+    panel:setResizable(false)
+    panel:setMovable(true)
+
+    local y = 30
+    local function lbl(text)
+        local l = ISLabel:new(10, y, 20, text, 1, 1, 1, 1, UIFont.Small, true)
+        l:initialise(); panel:addChild(l); y = y + 22
+    end
+    local function div()
+        local l = ISPanel:new(5, y, W-10, 1)
+        l:initialise(); l:setBackgroundColor(0.4,0.4,0.4,1)
+        panel:addChild(l); y = y + 9
+    end
+
+    local threat = EmpireNPC.stats.threatLevel > 0
+    lbl("EMPIRE COMMAND CENTER")
+    div()
+    lbl("Population: " .. settlerCount .. " survivors")
+    lbl("Threat: " .. (threat and "THREAT DETECTED" or "Secure"))
+    lbl("Guard Posts: " .. #EmpireNPC.guardPosts)
+    y = y + 4; div()
+    lbl("ROLES:")
+    lbl("  Guards:    " .. guardCount)
+    lbl("  Medics:    " .. medicCount)
+    lbl("  Wardens:   " .. wardenCount)
+    lbl("  Farmers:   " .. farmerCount)
+    lbl("  Looters:   " .. looterCount)
+    lbl("  Settlers:  " .. (settlerCount - guardCount - medicCount - wardenCount - farmerCount - looterCount))
+    y = y + 4; div()
+    lbl("RESOURCES (radius " .. RESOURCE_SCAN_RADIUS .. " tiles):")
+    lbl("  Food:   " .. EmpireNPC.stats.totalFood .. " items")
+    lbl("  Ammo:   " .. EmpireNPC.stats.totalAmmo .. " rounds")
+    lbl("  Meds:   " .. EmpireNPC.stats.totalMeds .. " items")
+    lbl("  Fuel:   " .. EmpireNPC.stats.totalFuel .. " cans")
+    y = y + 8
+
+    local closeBtn = ISButton:new(W/2-50, H-40, 100, 25, "Close", panel,
+        function(self) self.parent:removeFromUIManager(); panelOpen = false end)
+    closeBtn:initialise(); panel:addChild(closeBtn)
+    panel:addToUIManager()
+    return panel
+end
+
+local currentPanel = nil
+local function togglePanel()
+    if panelOpen and currentPanel then
+        pcall(function() currentPanel:removeFromUIManager() end)
+        currentPanel = nil; panelOpen = false
+    else
+        local ok, result = pcall(buildPanel)
+        if ok then currentPanel = result; panelOpen = true
+        else print("[EmpireNPC] Panel error: " .. tostring(result)) end
+    end
+end
+
+local function onKeyPressed(key)
+    if key == PANEL_KEY then
+        local p = getSpecificPlayer(0)
+        if p and not p:isDead() then pcall(togglePanel) end
+    end
+end
+
+Events.OnKeyPressed.Add(onKeyPressed)
+print("[EmpireNPC] Status Panel loaded. F10 to open.")

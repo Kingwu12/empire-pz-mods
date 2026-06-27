@@ -1,0 +1,228 @@
+-- Empire NPC - Auto Garrison v2 (companion-aware)
+-- "Send them to base and forget." Priority role auto-assignment + idle-pin (stop the
+-- floor-item shuffling) + auto-equip guards from base storage.
+-- v2: SKIPS companions (anyone in Follow mode / following you). Companions are handled by
+-- 7_Survival.lua (auto-retreat + heal); only BASE survivors get garrisoned & pinned, so
+-- following companions are never frozen in place.
+-- Built ONLY on SSC primitives that work (setAIMode, task clear, direct equip). All pcall'd.
+
+require "EmpireNPC_Shared"
+
+local R = EmpireNPC.Roles
+
+-- ===== CONFIG =====
+local GARRISON_ENABLED = true
+local ASSIGN_INTERVAL  = 1500
+local PIN_INTERVAL     = 200
+local THREAT_RADIUS    = 15
+local PIN_THREAT_R     = 8
+local FOOD_LOW         = 8
+local SCAN_R           = 12
+
+local LADDER = { R.GUARD, R.LOOTER, R.WARDEN, R.MEDIC, R.FARMER }
+
+-- A companion = actively following you. Those are NOT garrison; leave them to follow/fight.
+local function isCompanion(ss)
+    local m; pcall(function() m = ss:getAIMode() end)
+    if m == "Follow" then return true end
+    local t; pcall(function() t = ss:getTaskManager():getCurrentTask() end)
+    if t == "Follow" then return true end
+    return false
+end
+EmpireNPC.isCompanion = isCompanion
+
+-- ----- spatial helpers (same proven scan pattern as SmartBuild) -----
+local function eachContainerNear(char, radius, fn)
+    local cell = getCell(); if not cell or not char then return end
+    local cx, cy, cz = math.floor(char:getX()), math.floor(char:getY()), math.floor(char:getZ())
+    for dx = -radius, radius do
+        for dy = -radius, radius do
+            local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
+            if sq then
+                local sobs = sq:getStaticMovingObjects()
+                if sobs then for i = 0, sobs:size()-1 do local c = sobs:get(i):getContainer(); if c then fn(c) end end end
+                local obs = sq:getObjects()
+                if obs then for i = 0, obs:size()-1 do local o = obs:get(i)
+                    for ci = 1, o:getContainerCount() do local c = o:getContainerByIndex(ci-1); if c then fn(c) end end
+                end end
+            end
+        end
+    end
+end
+
+local function zombiesNear(char, radius)
+    local cell = getCell(); if not cell or not char then return false end
+    local cx, cy, cz = math.floor(char:getX()), math.floor(char:getY()), math.floor(char:getZ())
+    for dx = -radius, radius do
+        for dy = -radius, radius do
+            local sq = cell:getGridSquare(cx + dx, cy + dy, cz)
+            if sq then
+                local mo = sq:getMovingObjects()
+                if mo then for i = 0, mo:size()-1 do if instanceof(mo:get(i), "IsoZombie") then return true end end end
+            end
+        end
+    end
+    return false
+end
+
+local function countBaseFood(char)
+    local n = 0
+    eachContainerNear(char, SCAN_R, function(cont)
+        local items = cont:getItems()
+        for i = 0, items:size()-1 do if instanceof(items:get(i), "Food") then n = n + 1 end end
+    end)
+    return n
+end
+
+-- Pull the best MELEE weapon out of nearby base storage into the survivor's hands.
+local function equipFromBase(ss, char)
+    local cur = char:getPrimaryHandItem()
+    if cur and instanceof(cur, "HandWeapon") then return false end
+    local best, bestCont, bestDmg = nil, nil, 0
+    eachContainerNear(char, SCAN_R, function(cont)
+        local items = cont:getItems()
+        for i = 0, items:size()-1 do
+            local it = items:get(i)
+            if instanceof(it, "HandWeapon") then
+                local aimed = true; pcall(function() aimed = it:isAimedFirearm() end)
+                if not aimed then
+                    local dmg = 0; pcall(function() dmg = it:getMaxDamage() or 0 end)
+                    if dmg > bestDmg then best, bestCont, bestDmg = it, cont, dmg end
+                end
+            end
+        end
+    end)
+    if best then
+        local ok = pcall(function()
+            bestCont:Remove(best)
+            char:getInventory():AddItem(best)
+            char:setPrimaryHandItem(best)
+            if best:isTwoHandWeapon() then char:setSecondaryHandItem(best) end
+            if ss.setMeleWep then ss:setMeleWep(best) end
+        end)
+        if ok then return true, best:getName() end
+    end
+    return false
+end
+
+-- Pin a BASE survivor in place so SSC's idle AI can't send them shuffling your floor.
+local function pinSurvivor(ss, char, clearTasks)
+    if zombiesNear(char, PIN_THREAT_R) then return end       -- let them fight if threatened
+    if clearTasks then pcall(function() ss:getTaskManager():clear() end) end
+    pcall(function() ss:setAIMode("StandGround") end)
+end
+
+local function buildPlan(n, needs)
+    local plan = {}
+    for i = 1, n do plan[i] = LADDER[i] or R.GUARD end
+    if needs.threat and n >= 2 then plan[2] = R.GUARD end
+    if needs.foodLow and not needs.threat and n >= 2 then plan[2] = R.LOOTER end
+    return plan
+end
+
+local function computeNeeds(baseSurvivors)
+    local threat = false
+    for _, ss in ipairs(baseSurvivors) do
+        local ch = ss:Get()
+        if ch and zombiesNear(ch, THREAT_RADIUS) then threat = true; break end
+    end
+    local food, ref = 0, baseSurvivors[1] and baseSurvivors[1]:Get()
+    if ref then food = countBaseFood(ref) end
+    return { threat = threat, foodLow = (food < FOOD_LOW), food = food }
+end
+
+local function announce(text, good)
+    local p = getSpecificPlayer(0); if not p then return end
+    pcall(function()
+        HaloTextHelper.addText(p, text, good and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorYellow())
+    end)
+end
+
+-- Only survivors who are NOT following you = the garrison.
+local function getBaseSurvivors()
+    local out = {}
+    for _, ss in ipairs(EmpireNPC.getActiveSurvivors()) do
+        if not isCompanion(ss) then out[#out + 1] = ss end
+    end
+    return out
+end
+
+local function autoAssign()
+    if not SSM then return end
+    local base = getBaseSurvivors()
+    if #base == 0 then return end
+    local needs = computeNeeds(base)
+    local plan  = buildPlan(#base, needs)
+
+    local idx, changes = 1, 0
+    for _, ss in ipairs(base) do
+        local name = ss:getName()
+        if name and name ~= "" then
+            local s = EmpireNPC.getSettler(name); s.name = name
+            local isManual = (s.role and s.role ~= R.NONE and not s.autoAssigned)
+            if not isManual then
+                local newRole = plan[idx] or R.GUARD
+                if s.role ~= newRole then
+                    s.role = newRole; s.equipped = false; changes = changes + 1
+                    announce(name .. " -> " .. newRole, true)
+                end
+                s.autoAssigned = true
+                if newRole == R.GUARD and not s.equipped then
+                    local ch = ss:Get()
+                    if ch then
+                        local ok, wname = equipFromBase(ss, ch)
+                        if ok then announce(name .. " armed: " .. wname, true) end
+                        s.equipped = true
+                    end
+                end
+            end
+            idx = idx + 1
+        end
+    end
+
+    if needs.foodLow then
+        for _, ss in ipairs(base) do
+            local s = EmpireNPC.getSettler(ss:getName() or "")
+            if s and s.role == R.LOOTER and not s.onRun then
+                s.onRun = true; s.runReturnTick = 3600
+                announce((s.name or "Looter") .. " sent for food (base low)", true)
+                break
+            end
+        end
+    end
+
+    if changes > 0 then EmpireNPC.saveData() end
+    if EMPIRE_DEBUG_ON ~= false then
+        print(string.format("[EmpireGarrison] assign: base=%d threat=%s food=%d changes=%d",
+            #base, tostring(needs.threat), needs.food, changes))
+    end
+end
+
+local function pinPass(clearTasks)
+    if not SSM then return end
+    for _, ss in ipairs(EmpireNPC.getActiveSurvivors()) do
+        if not isCompanion(ss) then                          -- never freeze a follower
+            local ch = ss:Get()
+            if ch and not ch:isDead() then pcall(pinSurvivor, ss, ch, clearTasks) end
+        end
+    end
+end
+
+-- ----- ticks -----
+local assignTick, pinTick = 0, 0
+local function onTick()
+    if not GARRISON_ENABLED then return end
+    assignTick = assignTick + 1
+    pinTick    = pinTick + 1
+    if assignTick >= ASSIGN_INTERVAL then
+        assignTick, pinTick = 0, 0
+        pcall(autoAssign)
+        pcall(pinPass, true)
+    elseif pinTick >= PIN_INTERVAL then
+        pinTick = 0
+        pcall(pinPass, false)
+    end
+end
+Events.OnTick.Add(onTick)
+
+print("[EmpireNPC] Auto Garrison v2 loaded (companion-aware). Roles + idle-pin + auto-equip active.")

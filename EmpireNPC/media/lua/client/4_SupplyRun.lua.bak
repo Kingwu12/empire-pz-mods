@@ -1,0 +1,70 @@
+-- Empire NPC - Supply Run Handler
+-- Handles Looter NPCs returning from supply runs with loot
+
+local runTick = 0
+local RUN_CHECK = 60
+
+-- Loot tables for supply runs
+local SUPPLY_LOOT = {
+    food = { "Base.Chips", "Base.TinnedBeans", "Base.TinnedSardines",
+             "Base.Crackers", "Base.CannedCorn", "Base.Rice", "Base.Pasta" },
+    med  = { "Base.Bandage", "Base.Painkillers", "Base.Disinfectant",
+             "Base.AdhesiveBandage", "Base.Antibiotics" },
+    tool = { "Base.Hammer", "Base.Nails", "Base.Screwdriver",
+             "Base.WoodGlue", "Base.DuctTape", "Base.Saw" },
+    ammo = { "Base.Bullets9mm", "Base.ShotgunShells", "Base.Bullets308",
+             "Base.Bullets556mm" },
+}
+
+local function getRandomLoot()
+    local categories = { "food", "food", "med", "tool", "ammo" }  -- food weighted higher
+    local cat = categories[ZombRand(#categories) + 1]
+    local items = SUPPLY_LOOT[cat]
+    return items[ZombRand(#items) + 1]
+end
+
+local function processReturningRunners()
+    local player = getSpecificPlayer(0)
+    if not player then return end
+
+    for name, settler in pairs(EmpireNPC.settlers) do
+        if settler.onRun then
+            settler.runReturnTick = (settler.runReturnTick or 3600) - RUN_CHECK
+            if settler.runReturnTick <= 0 then
+                settler.onRun = false
+                settler.runReturnTick = nil
+
+                -- Give player loot as if NPC returned
+                local lootCount = ZombRand(3) + 2  -- 2-4 items
+                local inv = player:getInventory()
+                local lootNames = {}
+
+                for i = 1, lootCount do
+                    local itemType = getRandomLoot()
+                    local item = instanceItem(itemType)
+                    if item then
+                        inv:AddItem(item)
+                        lootNames[#lootNames + 1] = item:getDisplayName()
+                    end
+                end
+
+                local lootStr = table.concat(lootNames, ", ")
+                HaloTextHelper.addText(player,
+                    name .. " returned with: " .. lootStr,
+                    HaloTextHelper.getColorGreen())
+                player:Say(name .. " is back from the supply run!")
+                EmpireNPC.saveData()
+            end
+        end
+    end
+end
+
+local function onTick()
+    runTick = runTick + 1
+    if runTick < RUN_CHECK then return end
+    runTick = 0
+    pcall(processReturningRunners)
+end
+
+Events.OnTick.Add(onTick)
+print("[EmpireNPC] Supply Run Handler loaded.")

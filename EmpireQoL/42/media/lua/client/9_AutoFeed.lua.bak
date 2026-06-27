@@ -1,0 +1,476 @@
+-- Empire QoL - Auto Feed (v7 - reliable + self-throttling, never clears your queue)
+-- Keeps hunger & thirst topped up without babysitting the bars. Rebuilt to fix two old
+-- failures:
+--   (1) a stuck DRINK used to block EATING (thirst ran first and returned), so you could
+--       sit at half hunger with food right there and it never ate. Eat and drink are now
+--       INDEPENDENT -- a problem with one never blocks the other.
+--   (2) a doomed attempt (e.g. food in a fridge it can't path to) used to re-fire every
+--       second, and each failure wiped your WHOLE action queue -- breaking building,
+--       sleeping, every action. Now it ATTEMPTS, WAITS, then JUDGES whether the stat
+--       actually moved; if it didn't, it STANDS DOWN (30s, longer after repeats) instead
+--       of hammering. It also prefers food/water you're CARRYING (which never bugs) and
+--       only reaches into nearby storage as a fallback.
+-- SAFE-FOOD ONLY: skips rotten, frozen, raw-dangerous, booze, raw spice, sealed cans.
+-- Never fires mid-action or during combat.
+
+-- ===== CONFIG =====
+local EAT_AT      = 0.30    -- hunger (0 = full, 1 = starving) at which to START eating
+local DRINK_AT    = 0.30    -- thirst (0 = full, 1 = parched) at which to START drinking
+local FULL_AT     = 0.10    -- once started, keep topping up until this near-full
+local CHECK_MS    = 1500    -- real ms between checks (framerate-independent)
+local REACH       = 8       -- tiles: how close you stand to a container to auto-use it
+local SETTLE_MS   = 3000    -- after queuing, wait this long (and until idle) before judging
+local FAIL_CD_MS  = 30000   -- stand-down after an attempt that didn't move the bar
+local LONG_FAILS  = 3       -- after this many fails in a row...
+local LONG_CD_MS  = 120000  -- ...stand down this much longer
+-- ==================
+
+-- ---- error catcher: one tagged line per unique failure, then quiet (no flood) ----
+local EQ_logged = {}
+local function EQguard(label, fn)
+    local ok, err = pcall(fn)
+    if not ok and not EQ_logged[label] then
+        EQ_logged[label] = true
+        print("[EmpireQoL ERROR] " .. tostring(label) .. ": " .. tostring(err))
+    end
+    return ok
+end
+
+-- ---- helpers ----
+local function danger(player)
+    local s = player:getStats()
+    return s:getNumChasingZombies() > 0 or s:getNumVeryCloseZombies() > 0
+end
+
+local function busy(player)
+    local b = false
+    pcall(function() b = ISTimedActionQueue.isPlayerDoingAction(player) end)
+    return b
+end
+
+local function num(it, fn)
+    local v = 0
+    pcall(function() v = it[fn](it) or 0 end)
+    return v
+end
+
+local function isRotten(it) local r=false; pcall(function() r=it:isRotten() end); return r end
+local function isFrozen(it) local f=false; pcall(function() f=it:isFrozen() end); return f end
+local function dangerousRaw(it)
+    local d = false
+    pcall(function() d = it:isbDangerousUncooked() and not it:isCooked() and not it:isBurnt() end)
+    return d
+end
+local function isAlcoholic(it) local a=false; pcall(function() a=it:isAlcoholic() end); return a end
+local function isSpice(it)     local s=false; pcall(function() s=it:isSpice() end);     return s end
+local function isSealedCan(it)
+    local c = false
+    pcall(function() c = it:getScriptItem():isCantEat() end)   -- isCantEat lives on the script def
+    return c
+end
+
+local function eatableFood(it)
+    local food = false
+    pcall(function() food = instanceof(it, "Food") end)
+    if not food then return false end
+    if isRotten(it) or isFrozen(it) or dangerousRaw(it) then return false end
+    if isAlcoholic(it) or isSpice(it) or isSealedCan(it) then return false end
+    return num(it, "getHungerChange") < 0
+end
+
+-- Lower is better: cooked first, then food that won't tank happiness, then closest-to-spoiling.
+local function foodScore(it)
+    local off = math.huge
+    pcall(function() off = it:getOffAgeMax() or math.huge end)
+    local cooked = false
+    pcall(function() cooked = it:isCooked() end)
+    local unhappy = num(it, "getUnhappyChange")
+    return (cooked and 0 or 1e12) + (unhappy > 0 and 5e11 or 0) + off
+end
+
+local function allCarried(player)
+    local out, seen = {}, {}
+    local function rec(cont, depth)
+        if not cont or seen[cont] or depth > 4 then return end
+        seen[cont] = true
+        local items = cont:getItems()
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            out[#out+1] = it
+            if instanceof(it, "InventoryContainer") then
+                local sub = nil
+                pcall(function() sub = it:getInventory() end)
+                if sub and sub ~= cont then rec(sub, depth + 1) end
+            end
+        end
+    end
+    rec(player:getInventory(), 0)
+    return out
+end
+
+local function nearbyContainers(player)
+    local out = {}
+    -- vehicle (RV) storage isn't on a floor square, so add the vehicle's containers first
+    local veh = nil
+    pcall(function() veh = player:getVehicle() end)
+    if veh then
+        local np = 0
+        pcall(function() np = veh:getPartCount() end)
+        for pi = 1, np do
+            pcall(function()
+                local part = veh:getPartByIndex(pi - 1)
+                local c = part and part:getItemContainer()
+                if c then out[#out+1] = c end
+            end)
+        end
+    end
+    local cell = getCell()
+    if not cell then return out end
+    local z  = player:getZ()
+    local cx = math.floor(player:getX())
+    local cy = math.floor(player:getY())
+    for x = cx - REACH, cx + REACH do
+        for y = cy - REACH, cy + REACH do
+            local sq = cell:getGridSquare(x, y, z)
+            if sq then
+                local sobs = sq:getStaticMovingObjects()
+                for i = 0, sobs:size() - 1 do
+                    local cont = nil
+                    pcall(function() cont = sobs:get(i):getContainer() end)
+                    if cont then out[#out+1] = cont end
+                end
+                local objs = sq:getObjects()
+                for i = 0, objs:size() - 1 do
+                    local o = objs:get(i)
+                    local n = 0
+                    pcall(function() n = o:getContainerCount() end)
+                    if n and n > 0 then
+                        for ci = 1, n do
+                            local cont = nil
+                            pcall(function() cont = o:getContainerByIndex(ci - 1) end)
+                            if cont then out[#out+1] = cont end
+                        end
+                    else
+                        local cont = nil
+                        pcall(function() cont = o:getContainer() end)
+                        if cont then out[#out+1] = cont end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- ---- pickers ----
+local function bestFoodInItems(items)
+    local best, bestS = nil, math.huge
+    for _, it in ipairs(items) do
+        if eatableFood(it) then
+            local s = foodScore(it)
+            if s < bestS then best, bestS = it, s end
+        end
+    end
+    return best
+end
+
+local function bestFoodNearby(player)
+    local best, bestS, bestCont = nil, math.huge, nil
+    for _, cont in ipairs(nearbyContainers(player)) do
+        local items = cont:getItems()
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            if eatableFood(it) then
+                local s = foodScore(it)
+                if s < bestS then best, bestS, bestCont = it, s, cont end
+            end
+        end
+    end
+    return best, bestCont
+end
+
+-- ---- canned-food auto-open (valid-checked, so it can't bug the queue) ----
+local openRecipeCache = {}
+local function findOpenRecipe(can)
+    local ft = nil
+    pcall(function() ft = can:getFullType() end)
+    if not ft then return nil end
+    local cached = openRecipeCache[ft]
+    if cached ~= nil then
+        if cached == false then return nil end
+        return cached
+    end
+    local found = false
+    pcall(function()
+        local recipes = getAllRecipes()
+        for i = 0, recipes:size() - 1 do
+            local r = recipes:get(i)
+            local nm = r:getName()
+            if nm and nm:sub(1,4) == "Open" then
+                local src = r:getSource()
+                for j = 0, src:size() - 1 do
+                    local items = src:get(j):getItems()
+                    for k = 0, items:size() - 1 do
+                        if items:get(k) == ft then found = r break end
+                    end
+                    if found then break end
+                end
+            end
+            if found then break end
+        end
+    end)
+    openRecipeCache[ft] = found
+    if found == false then return nil end
+    return found
+end
+
+local function openableCan(it)
+    local food = false
+    pcall(function() food = instanceof(it, "Food") end)
+    if not food then return false end
+    if isRotten(it) then return false end
+    return findOpenRecipe(it) ~= nil
+end
+
+local function hasCanOpener(carried)
+    for _, it in ipairs(carried) do
+        local t = false
+        pcall(function() t = it:hasTag("CanOpener") end)
+        if t then return true end
+    end
+    return false
+end
+
+local function openCanFromCarried(player, carried)
+    local containers = nil
+    pcall(function() containers = ISInventoryPaneContextMenu.getContainers(player) end)
+    if not containers then return false end
+    for _, it in ipairs(carried) do
+        if openableCan(it) then
+            local recipe = findOpenRecipe(it)
+            local valid = false
+            pcall(function() valid = RecipeManager.IsRecipeValid(recipe, player, it, containers) end)
+            if valid then
+                local ok = false
+                pcall(function()
+                    ISInventoryPaneContextMenu.OnCraft(it, recipe, player:getPlayerNum(), false)
+                    ok = true
+                end)
+                if ok then return true end
+            end
+        end
+    end
+    return false
+end
+
+local function pullCanFromNearby(player)
+    for _, cont in ipairs(nearbyContainers(player)) do
+        local items = cont:getItems()
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            if openableCan(it) then
+                local ok = false
+                pcall(function()
+                    ISTimedActionQueue.add(ISInventoryTransferAction:new(player, it, cont, player:getInventory()))
+                    ok = true
+                end)
+                if ok then return true end
+            end
+        end
+    end
+    return false
+end
+
+local function isWaterBottle(it)
+    local ok = false
+    pcall(function()
+        ok = instanceof(it, "DrainableComboItem") and it:isWaterSource()
+             and it:getDrainableUsesInt() > 0
+    end)
+    return ok
+end
+
+local function isThirstFood(it)
+    local food = false
+    pcall(function() food = instanceof(it, "Food") end)
+    return food and not isRotten(it) and not isFrozen(it) and not isAlcoholic(it)
+           and num(it, "getThirstChange") < 0
+end
+
+local function firstMatchInItems(items, pred)
+    for _, it in ipairs(items) do if pred(it) then return it end end
+    return nil
+end
+
+local function firstMatchNearby(player, pred)
+    for _, cont in ipairs(nearbyContainers(player)) do
+        local items = cont:getItems()
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            if pred(it) then return it, cont end
+        end
+    end
+    return nil, nil
+end
+
+-- ---- actions ----
+local function transfer(player, it, cont)
+    local need = false
+    pcall(function() need = luautils.haveToBeTransfered(player, it) end)
+    if need and cont then
+        ISTimedActionQueue.add(ISInventoryTransferAction:new(player, it, cont, player:getInventory()))
+    end
+end
+
+local function eatIt(player, it, cont)
+    transfer(player, it, cont)
+    ISTimedActionQueue.add(ISEatFoodAction:new(player, it, 1))
+end
+
+local function drinkIt(player, bottle, cont)
+    transfer(player, bottle, cont)
+    local uses = 1
+    pcall(function() uses = bottle:getDrainableUsesInt() end)
+    if uses > 10 then uses = 10 end
+    if uses < 1 then uses = 1 end
+    ISTimedActionQueue.add(ISDrinkFromBottle:new(player, bottle, uses))
+end
+
+-- ============================================================
+-- MAIN LOOP  (v7: attempt -> settle -> judge, with per-kind backoff)
+-- ============================================================
+local lastCheckMs = 0
+local feeding, drinking = false, false
+local hungerDiagSaid = false
+local pending = nil                         -- { kind="eat"|"drink"|"open", at=ms, stat=number }
+local cool  = { eat = 0, drink = 0 }        -- timestamp until which we stand down (per kind)
+local fails = { eat = 0, drink = 0 }        -- consecutive failed attempts (per kind)
+
+local function setPending(kind, statValue)
+    pending = { kind = kind, at = getTimestampMs(), stat = statValue }
+end
+
+-- returns true = "still waiting, do nothing this cycle"; false = "resolved, free to act"
+local function judgePending(player, hunger, thirst)
+    if not pending then return false end
+    if busy(player) then return true end                       -- action still running; wait
+    local now = getTimestampMs()
+    if now - pending.at < SETTLE_MS then return true end        -- let the bar register first
+
+    local kind = pending.kind
+    if kind == "open" then
+        pending = nil                                           -- opening never penalised
+        return false
+    end
+    local cur = (kind == "drink") and thirst or hunger
+    if cur < pending.stat - 0.01 then
+        fails[kind] = 0                                         -- bar moved -> success
+    else
+        fails[kind] = fails[kind] + 1                           -- nothing happened -> back off
+        local cd = (fails[kind] >= LONG_FAILS) and LONG_CD_MS or FAIL_CD_MS
+        cool[kind] = now + cd
+        print("[EmpireQoL AutoFeed] " .. kind .. " didn't take (fail #" .. fails[kind]
+            .. ") - standing down " .. math.floor(cd / 1000) .. "s")
+    end
+    pending = nil
+    return false
+end
+
+local function logHungryOnce(player, carried, stats)
+    if hungerDiagSaid then return end
+    hungerDiagSaid = true
+    local nc = nearbyContainers(player)
+    local function whyNot(it)
+        local food = false; pcall(function() food = instanceof(it, "Food") end)
+        if not food then return nil end
+        if isRotten(it)     then return "rotten" end
+        if isFrozen(it)     then return "frozen" end
+        if dangerousRaw(it) then return "raw-needs-cooking" end
+        if isAlcoholic(it)  then return "alcoholic" end
+        if isSpice(it)      then return "spice/seasoning" end
+        if isSealedCan(it)  then
+            return (findOpenRecipe(it) ~= nil) and "EATABLE-once-opened" or "sealed-can-NO-open-recipe"
+        end
+        if num(it, "getHungerChange") >= 0 then return "zero-hunger-value" end
+        return "EATABLE"
+    end
+    local eatableNear, lines, shown = 0, {}, 0
+    local function note(it, where)
+        local r = whyNot(it); if not r then return end
+        if r == "EATABLE" then eatableNear = eatableNear + 1 end
+        if shown < 14 then
+            local nm = "?"; pcall(function() nm = it:getName() end)
+            lines[#lines+1] = string.format("    [%s] %s -> %s", where, tostring(nm), r)
+            shown = shown + 1
+        end
+    end
+    for _, it in ipairs(carried or {}) do note(it, "carried") end
+    for _, c in ipairs(nc) do
+        local its = nil; pcall(function() its = c:getItems() end)
+        if its then for i = 0, its:size() - 1 do note(its:get(i), "nearby") end end
+    end
+    local inVeh = false; pcall(function() inVeh = player:getVehicle() ~= nil end)
+    print(string.format("[EmpireQoL AutoFeed] hungry=%.2f no-eat | carried=%d nearbyConts=%d eatableInReach=%d REACH=%d hasOpener=%s inVehicle=%s",
+        stats:getHunger(), #(carried or {}), #nc, eatableNear, REACH, tostring(hasCanOpener(carried or {})), tostring(inVeh)))
+    for _, ln in ipairs(lines) do print("[EmpireQoL AutoFeed] " .. ln) end
+end
+
+local function onTickBody()
+    local nowMs = getTimestampMs()
+    if nowMs - lastCheckMs < CHECK_MS then return end
+    lastCheckMs = nowMs
+
+    local player = getSpecificPlayer(0)
+    if not player or player:isDead() or player:isAsleep() then return end
+    if danger(player) then return end
+
+    local stats  = player:getStats()
+    local hunger = stats:getHunger()
+    local thirst = stats:getThirst()
+
+    -- resolve a previous attempt first (success resets, failure sets a cooldown)
+    if judgePending(player, hunger, thirst) then return end
+
+    -- never fight the player's own queued actions
+    if busy(player) then return end
+
+    -- hysteresis
+    if thirst >= DRINK_AT then drinking = true end
+    if thirst <= FULL_AT  then drinking = false end
+    if hunger >= EAT_AT   then feeding  = true end
+    if hunger <= FULL_AT  then feeding  = false; hungerDiagSaid = false end
+
+    local carried = nil
+
+    -- THIRST -- independent of hunger; skipped only while ON a drink cooldown
+    if drinking and nowMs >= cool.drink then
+        carried = carried or allCarried(player)
+        local b = firstMatchInItems(carried, isWaterBottle)
+        if b then drinkIt(player, b, nil); setPending("drink", thirst); return end
+        local tf = firstMatchInItems(carried, isThirstFood)
+        if tf then eatIt(player, tf, nil); setPending("drink", thirst); return end
+        local nb, nbC = firstMatchNearby(player, isWaterBottle)
+        if nb then drinkIt(player, nb, nbC); setPending("drink", thirst); return end
+        local ntf, ntfC = firstMatchNearby(player, isThirstFood)
+        if ntf then eatIt(player, ntf, ntfC); setPending("drink", thirst); return end
+    end
+
+    -- HUNGER -- independent of thirst; skipped only while ON an eat cooldown
+    if feeding and nowMs >= cool.eat then
+        carried = carried or allCarried(player)
+        local f = bestFoodInItems(carried)            -- carried first (never bugs)
+        if f then eatIt(player, f, nil); setPending("eat", hunger); return end
+        local nf, nfC = bestFoodNearby(player)         -- then nearby storage
+        if nf then eatIt(player, nf, nfC); setPending("eat", hunger); return end
+        if hasCanOpener(carried) then                  -- else open a can (eaten next cycle)
+            if openCanFromCarried(player, carried) then setPending("open", hunger); return end
+            if pullCanFromNearby(player) then setPending("open", hunger); return end
+        end
+        logHungryOnce(player, carried, stats)          -- truly nothing edible -> log once
+    end
+end
+
+local function onTick() EQguard("onTick loop", onTickBody) end
+Events.OnTick.Add(onTick)
+
+print("[EmpireQoL] Auto Feed v7 loaded. Eat/drink independent, carried-food first, self-throttling backoff (no queue hammering).")

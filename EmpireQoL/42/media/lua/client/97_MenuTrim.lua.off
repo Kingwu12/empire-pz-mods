@@ -1,0 +1,37 @@
+-- Empire QoL - Right-Click Menu Trim
+-- Cuts per-click lag by REMOVING the heavy world-context-menu builders you don't use.
+-- Removal ONLY -- no wrappers, no re-adding -- so there is ZERO chance of duplicated
+-- options (unlike the old profiler). Runs at game start, after every mod has registered.
+--
+-- KEPT ON PURPOSE: Cheat Menu, all vanilla options, anything unique you can't get elsewhere.
+-- Each strip below is one line -- comment it out to keep that menu, uncomment to remove.
+
+local function strip(label, getter)
+    local ok, fn = pcall(getter)
+    if ok and type(fn) == "function" then
+        local removed = pcall(function() Events.OnFillWorldObjectContextMenu.Remove(fn) end)
+        if removed then print("[EmpireQoL] MenuTrim: removed " .. label .. " right-click builder") end
+    end
+end
+
+local function trim()
+    -- Hydrocraft "Building"/"Ranching" submenu: ~13 recursive item-counts EVERY right-click. The pig.
+    -- (Hydrocraft items + all crafting-menu recipes are untouched -- only the right-click builder goes.)
+    strip("Hydrocraft", function() return Hydrocraft.doBuildMenus end)
+
+    -- MoreBuilds extra build options (vanilla build menu + your other build mods still cover building):
+
+    -- CheatMenu Rebirth is RIGHT-CLICK ONLY (no key, no button) -- stripping it removes ALL
+    -- access to the cheat menu, so we KEEP it. (If you ever want the lag gone, I can add a
+    -- hotkey to open it, then strip it from the default right-click.)
+    -- strip("CheatMenuRebirth", function() return ISUICheatMenu.createMenuEntries end)
+
+    -- Debug + Admin right-click menus: pure overhead you never use in normal play. Safe to drop.
+    strip("DebugContextMenu", function() return DebugContextMenu.doDebugMenu end)
+    strip("AdminContextMenu", function() return AdminContextMenu.doMenu end)
+    -- KEPT: Superb Survivors (NPC commands) -- unique, and we test it separately for the barricade.
+    print("[EmpireQoL] MenuTrim done.")
+end
+
+Events.OnGameStart.Add(trim)
+print("[EmpireQoL] MenuTrim queued (installs at game start).")
