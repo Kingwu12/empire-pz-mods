@@ -3,28 +3,50 @@
 -- A "node" is any container the player designates with a recipe. It does NOT
 -- tick. State (recipe + lastHour) lives in the object's ModData (persists with
 -- the save). Production is computed only when touched (right-click / collect):
---   units = min( elapsedHours * ratePerHour , inputSetsAvailable , bufferRoom )
--- So a node is O(1) on access and free the rest of the time. Inputs and outputs
--- both live in the node's own container. Recipes are pure data -> add anything.
+--   cycles = min( elapsedHours * ratePerHour , inputSetsAvailable , bufferRoom )
+-- Each cycle consumes inputs.n of each input and yields outputN output items.
+-- O(1) on access, free the rest of the time. Inputs and outputs both live in
+-- the node's own container. Recipes are pure data -> add anything.
 -- ============================================================
 
 EmpireProd = EmpireProd or {}
 local EP = EmpireProd
 EP.recipes = EP.recipes or {}
 
--- recipe: name, ratePerHour (output units/hr), bufferCap (max output held),
---         inputs = { {type, n}, ... } consumed per unit, output = item full type
-EP.recipes["reload_9mm"] = {
-    name        = "Reload 9mm",
-    ratePerHour = 30,
-    bufferCap   = 600,
-    inputs      = { { type = "Base.GunPowder", n = 1 }, { type = "Base.Lead", n = 1 }, { type = "Base.BrassScrap", n = 1 } },
-    output      = "Base.Bullets9mm",
+-- recipe fields:
+--   name        display name
+--   hint        one-line "inputs -> output" shown in the setup menu
+--   ratePerHour production cycles per in-game hour
+--   outputN     output items produced per cycle (default 1)
+--   bufferCap   max output items held before it stalls
+--   inputs      { {type, n}, ... } consumed per cycle
+--   output      item full type produced
+EP.recipes["asm_9mm"] = {
+    name = "Assemble 9mm Rounds", hint = "Powder + Lead + Brass -> 9mm",
+    ratePerHour = 30, outputN = 1, bufferCap = 600,
+    inputs = { { type = "Base.GunPowder", n = 1 }, { type = "Base.Lead", n = 1 }, { type = "Base.BrassScrap", n = 1 } },
+    output = "Base.Bullets9mm",
+}
+EP.recipes["charcoal"] = {
+    name = "Burn Charcoal", hint = "Logs -> Charcoal",
+    ratePerHour = 3, outputN = 2, bufferCap = 200,
+    inputs = { { type = "Base.Log", n = 1 } },
+    output = "Base.Charcoal",
+}
+EP.recipes["planks"] = {
+    name = "Saw Planks", hint = "Logs -> Planks",
+    ratePerHour = 2, outputN = 3, bufferCap = 200,
+    inputs = { { type = "Base.Log", n = 1 } },
+    output = "Base.Plank",
 }
 
 function EP.nowHours()
     local gt = getGameTime()
     return (gt and gt:getWorldAgeHours()) or 0
+end
+
+function EP.describe(recipe)
+    return recipe.hint or recipe.name
 end
 
 local function countType(container, ftype)
@@ -35,6 +57,7 @@ local function countType(container, ftype)
     return n
 end
 
+-- how many full cycles the inputs on hand can support
 local function inputSets(container, recipe)
     local sets = nil
     for _, inp in ipairs(recipe.inputs) do
@@ -57,8 +80,8 @@ local function removeN(container, ftype, n)
     for _, it in ipairs(found) do pcall(function() container:Remove(it) end) end
 end
 
--- Resolve accrued production. Returns madeUnits (for status text). Safe to call
--- any time; advances the node clock only by time actually converted.
+-- Resolve accrued production. Returns produced output-item count (for status).
+-- Safe to call any time; advances the node clock only by time actually used.
 function EP.resolve(obj)
     if not obj or not obj.getModData then return 0 end
     local md = obj:getModData()
@@ -68,29 +91,30 @@ function EP.resolve(obj)
     local container = obj.getContainer and obj:getContainer() or nil
     if not recipe or not container then return 0 end
 
+    local outN = recipe.outputN or 1
     local now = EP.nowHours()
     node.lastHour = node.lastHour or now
     local elapsed = now - node.lastHour
     if elapsed <= 0 then return 0 end
 
-    local byTime   = math.floor(elapsed * recipe.ratePerHour)
-    local bySets   = inputSets(container, recipe)
-    local room     = recipe.bufferCap - countType(container, recipe.output)
-    local units    = math.min(byTime, bySets, math.max(0, room))
-    if units < 0 then units = 0 end
+    local byTime = math.floor(elapsed * recipe.ratePerHour)         -- cycles by clock
+    local bySets = inputSets(container, recipe)                     -- cycles by inputs
+    local room   = math.floor((recipe.bufferCap - countType(container, recipe.output)) / outN) -- cycles that fit
+    local cycles = math.min(byTime, bySets, math.max(0, room))
+    if cycles < 0 then cycles = 0 end
 
-    if units > 0 then
-        for _, inp in ipairs(recipe.inputs) do removeN(container, inp.type, inp.n * units) end
-        for _ = 1, units do pcall(function() container:AddItem(recipe.output) end) end
+    if cycles > 0 then
+        for _, inp in ipairs(recipe.inputs) do removeN(container, inp.type, inp.n * cycles) end
+        for _ = 1, cycles * outN do pcall(function() container:AddItem(recipe.output) end) end
     end
 
-    if units >= byTime then
-        node.lastHour = node.lastHour + units / recipe.ratePerHour   -- time-limited: bank only used time
+    if cycles >= byTime then
+        node.lastHour = node.lastHour + cycles / recipe.ratePerHour -- time-limited: bank only used time
     else
-        node.lastHour = now                                          -- input/buffer stalled: don't bank idle
+        node.lastHour = now                                         -- input/buffer stalled: don't bank idle
     end
     pcall(function() obj:transmitModData() end)
-    return units
+    return cycles * outN
 end
 
 -- one-line status for the context menu
@@ -103,5 +127,6 @@ function EP.status(obj)
     local container = obj:getContainer()
     local have = container and countType(container, recipe.output) or 0
     local sets = container and inputSets(container, recipe) or 0
-    return string.format("%s: %d made, %dh of inputs left", recipe.name, have, math.floor(sets / math.max(1, recipe.ratePerHour)))
+    local hoursLeft = math.floor(sets / math.max(1, recipe.ratePerHour))
+    return string.format("%s: %d made, ~%dh inputs left", recipe.name, have, hoursLeft)
 end

@@ -1,8 +1,8 @@
 -- ============================================================
 -- Empire Production : interaction (client)
 -- Right-click a container in the world:
---   not a node yet -> "Set up production > [recipe]"
---   already a node -> status line + "Collect now" + "Stop production"
+--   not a node yet -> "Set up production > [recipe (inputs -> output)]"
+--   already a node -> status line (info) + "Collect now" + "Stop production"
 -- Resolve runs on access (cheap), so you can leave and come back and the output
 -- is waiting. No per-tick work.
 -- ============================================================
@@ -26,6 +26,14 @@ end
 local function halo(playerObj, text, good)
     local col = good and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorWhite()
     pcall(function() HaloTextHelper.addTextWithArrow(playerObj, text, "[br/]", false, col) end)
+end
+
+-- recipes sorted by display name, stable across sessions
+local function sortedRecipes()
+    local list = {}
+    for id, r in pairs(EP.recipes) do list[#list + 1] = { id = id, r = r } end
+    table.sort(list, function(a, b) return (a.r.name or a.id) < (b.r.name or b.id) end)
+    return list
 end
 
 local function setupNode(playerObj, obj, recipeId)
@@ -63,15 +71,18 @@ local function onFill(player, context, worldobjects)
         local opt = context:addOption("Empire Production", nil, nil)
         local sub = ISContextMenu:getNew(context)
         context:addSubMenu(opt, sub)
-        sub:addOption(EP.status(obj) or "Status", playerObj, function() collect(playerObj, obj) end)
+        -- status as a non-clickable info line
+        local info = sub:addOption(EP.status(obj) or "Status", nil, nil)
+        info.notAvailable = true
         sub:addOption("Collect now", playerObj, function() collect(playerObj, obj) end)
         sub:addOption("Stop production", playerObj, function() stopNode(playerObj, obj) end)
     else
         local opt = context:addOption("Set up production", nil, nil)
         local sub = ISContextMenu:getNew(context)
         context:addSubMenu(opt, sub)
-        for id, r in pairs(EP.recipes) do
-            sub:addOption(r.name, playerObj, function() setupNode(playerObj, obj, id) end)
+        for _, e in ipairs(sortedRecipes()) do
+            local label = e.r.name .. "  (" .. EP.describe(e.r) .. ")"
+            sub:addOption(label, playerObj, function() setupNode(playerObj, obj, e.id) end)
         end
     end
 end
