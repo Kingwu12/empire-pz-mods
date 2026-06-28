@@ -57,28 +57,33 @@ local function onFill(player, context, worldobjects)
 
     local here = EZ.zoneAt(x, y, z)
     if here then
-        sub:addOption("Add this tile (" .. here.name .. ")", nil, function()
-            EZ.addTile(here.id, x, y, z); halo(pl, here.name .. ": " .. EZ.tileCount(here) .. " tiles")
+        sub:addOption("Add this tile (" .. here.name .. ")", pl, function()
+            EZ.addTile(here.id, x, y, z); showZone(playerNum, here)
+            halo(pl, here.name .. ": " .. EZ.tileCount(here) .. " tiles")
         end)
-        sub:addOption("Add 5x5 here (" .. here.name .. ")", nil, function()
-            EZ.addBlock(here.id, x, y, z, 2); halo(pl, here.name .. ": " .. EZ.tileCount(here) .. " tiles")
+        sub:addOption("Add 5x5 here (" .. here.name .. ")", pl, function()
+            EZ.addBlock(here.id, x, y, z, 2); showZone(playerNum, here)
+            halo(pl, here.name .. ": " .. EZ.tileCount(here) .. " tiles")
         end)
-        sub:addOption("Remove this tile", nil, function()
-            EZ.removeTile(here.id, x, y, z); halo(pl, "Removed (" .. EZ.tileCount(here) .. " left)")
+        sub:addOption("Remove this tile", pl, function()
+            EZ.removeTile(here.id, x, y, z); showZone(playerNum, here)
+            halo(pl, "Removed (" .. EZ.tileCount(here) .. " left)")
         end)
-        sub:addOption("Show " .. here.name, nil, function() showZone(playerNum, here) end)
-        sub:addOption("Hide zones", nil, function() clearShown(playerNum) end)
-        sub:addOption("Delete " .. here.name, nil, function()
+        sub:addOption("Show " .. here.name, pl, function() showZone(playerNum, here) end)
+        sub:addOption("Hide zones", pl, function() clearShown(playerNum) end)
+        sub:addOption("Delete " .. here.name, pl, function()
             clearShown(playerNum); EZ.delete(here.id); halo(pl, "Zone deleted")
         end)
     else
         for _, t in ipairs(EZ.TYPES) do
-            sub:addOption("New " .. t .. " zone here", nil, function()
-                local id = EZ.newZone(t:sub(1,1):upper() .. t:sub(2) .. " " .. x .. "_" .. y, t)
-                EZ.addTile(id, x, y, z); halo(pl, "Started " .. t .. " zone (1 tile)")
+            local ztype = t
+            sub:addOption("New " .. ztype .. " zone here", pl, function()
+                local id = EZ.newZone(ztype:sub(1,1):upper() .. ztype:sub(2) .. " " .. x .. "_" .. y, ztype)
+                EZ.addTile(id, x, y, z); showZone(playerNum, EZ.get(id))
+                halo(pl, "Started " .. ztype .. " zone (1 tile)")
             end)
         end
-        sub:addOption("Hide zones", nil, function() clearShown(playerNum) end)
+        sub:addOption("Hide zones", pl, function() clearShown(playerNum) end)
     end
 end
 

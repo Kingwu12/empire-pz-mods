@@ -83,12 +83,36 @@ function EmpireBases.syncMainFromKS()
     return true
 end
 
--- The registered bases. Seeds "Main" from SSC, else KnoxSurvivors, the first time
--- valid bounds exist.
+-- Read OUR painted Empire Zones "base" zone as a rectangle + floor range. This is
+-- the highlight-based base that replaces external markers (KS/SSC).
+function EmpireBases.getEmpireZoneBase()
+    local out
+    pcall(function()
+        if not EmpireZones or not EmpireZones.all or not EmpireZones.parseKey then return end
+        local x1, x2, y1, y2, z1, z2
+        for _, zone in pairs(EmpireZones.all()) do
+            if zone and zone.type == "base" and zone.tiles then
+                for k in pairs(zone.tiles) do
+                    local x, y, zz = EmpireZones.parseKey(k)
+                    if x then
+                        x1 = x1 and math.min(x1, x) or x; x2 = x2 and math.max(x2, x) or x
+                        y1 = y1 and math.min(y1, y) or y; y2 = y2 and math.max(y2, y) or y
+                        z1 = z1 and math.min(z1, zz) or zz; z2 = z2 and math.max(z2, zz) or zz
+                    end
+                end
+            end
+        end
+        if x1 then out = { x1 = x1, x2 = x2, y1 = y1, y2 = y2, z = z1, zmin = z1, zmax = z2 } end
+    end)
+    if out and EmpireBases.validBounds(out) then return out end
+    return nil
+end
+
+-- The registered bases. Seeds "Main" from a painted base zone, else SSC.
 function EmpireBases.list()
     local t = store()
     if #t.list == 0 then
-        local seed = EmpireBases.getSSCBase() or EmpireBases.getKSBase()
+        local seed = EmpireBases.getEmpireZoneBase() or EmpireBases.getSSCBase()
         if seed then
             table.insert(t.list, { name = "Main", x1 = seed.x1, x2 = seed.x2,
                                    y1 = seed.y1, y2 = seed.y2, z = seed.z })
@@ -154,6 +178,16 @@ function EmpireBases.scanBounds(playerObj, radiusFallback)
     local sq = playerObj:getCurrentSquare()
     if not sq then return nil end
     local pz = sq:getZ()
+    local px, py = sq:getX(), sq:getY()
+
+    -- 1) live painted Empire Zones "base" zone (the highlight base) wins, and
+    --    covers exactly the floors you painted.
+    local zb = EmpireBases.getEmpireZoneBase()
+    if zb and px >= zb.x1 and px <= zb.x2 and py >= zb.y1 and py <= zb.y2 then
+        return zb.x1, zb.x2, zb.y1, zb.y2, (zb.zmin or pz), (zb.zmax or pz), zb
+    end
+
+    -- 2) a registered base rectangle (legacy/SSC) -> whole base, +/- floor spread
     local b = EmpireBases.activeBase(playerObj)
     if b then
         local spread = EmpireBases.FLOOR_SPREAD or 0
@@ -161,8 +195,9 @@ function EmpireBases.scanBounds(playerObj, radiusFallback)
                math.min(b.y1, b.y2), math.max(b.y1, b.y2),
                pz - spread, pz + spread, b
     end
+
+    -- 3) no base defined -> radius box around you, current floor only
     local r = radiusFallback or 12
-    local px, py = sq:getX(), sq:getY()
     return px - r, px + r, py - r, py + r, pz, pz, nil
 end
 
