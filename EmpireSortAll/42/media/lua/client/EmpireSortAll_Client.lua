@@ -891,7 +891,11 @@ local function smartSort(player)
                 -- magnet=true: belongs in a TAGGED container ONLY. If all tagged homes
                 -- for it are full, it STAYS put (never shuffled to a random shelf) and is
                 -- reported as "couldn't fit" so you know to tag a bigger container.
-                if dest and dest ~= st.c then moves[#moves+1] = { item = it, from = st.c, to = dest, magnet = true } end
+                -- IDEMPOTENCY: if the item is ALREADY in a container tagged for its own
+                -- category it's already home -- don't drag it toward the "first" tagged box.
+                -- (That was making two same-tag containers ping-pong items every sort.)
+                local alreadyHome = st.tag and st.tag[cat]
+                if dest and dest ~= st.c and not alreadyHome then moves[#moves+1] = { item = it, from = st.c, to = dest, magnet = true } end
             end
         end
     end
@@ -958,10 +962,26 @@ local function smartSort(player)
             for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
             for _, it in ipairs(snap) do
                 local isBag = instanceof(it, "InventoryContainer")
-                if not isProtected(it) and not isBag and not isLoadoutItem(it) then
-                    local cat = categoryOf(it)
-                    local dest = homeFor(cat)
-                    if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest } end
+                if not isProtected(it) and not isLoadoutItem(it) then
+                    if isBag then
+                        -- loose EMPTY bags (garbage/paper bag, spare duffel) are clutter ->
+                        -- file them like any item. A bag with stuff inside is left so its
+                        -- contents sort out first (it files once empty); a worn/favourited
+                        -- bag is already protected above; a "keep" bag is skipped; and a
+                        -- placed cart/deployable is blocked downstream by NEVER_MOVE.
+                        local empty, keep = true, false
+                        pcall(function() empty = it:getInventory():getItems():isEmpty() end)
+                        pcall(function() local md = it:getModData(); keep = md and md.empireKeepBag == true end)
+                        if empty and not keep then
+                            local cat = categoryOf(it)
+                            local dest = homeFor(cat)
+                            if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest } end
+                        end
+                    else
+                        local cat = categoryOf(it)
+                        local dest = homeFor(cat)
+                        if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest } end
+                    end
                 end
             end
         end
@@ -1265,7 +1285,9 @@ local function consolidateTypes(player)
         st.cold = false
         if st.tag then
             st.designated, st.homeCats = true, st.tag
-        elseif isFreezer(st.ctype) or isFridge(st.ctype) then
+        elseif isFreezer(st.ctype) then
+            st.designated, st.homeCats, st.cold, st.freezer = true, { Frozen = true }, true, true
+        elseif isFridge(st.ctype) then
             st.designated, st.homeCats, st.cold = true, { Perishable = true }, true
         else
             local aff = affinityOf(st.ctype)
@@ -1275,8 +1297,13 @@ local function consolidateTypes(player)
     end
 
     -- A container may RECEIVE an item of category `cat` only if it's allowed to hold it.
+    -- Cold mirrors Smart Sort exactly (freezer=Frozen, fridge=Perishable) so consolidate
+    -- never pulls a frozen item out of the freezer that Smart Sort would just put back.
     local function eligible(st, cat)
-        if st.cold then return cat == "Perishable" end
+        if st.cold then
+            if st.freezer then return cat == "Frozen" end
+            return cat == "Perishable"
+        end
         if st.tag then return st.tag[cat] == true end
         if st.designated then return st.homeCats and st.homeCats[cat] == true end
         return true   -- plain general shelf: takes anything
