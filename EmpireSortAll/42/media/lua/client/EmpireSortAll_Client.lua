@@ -192,7 +192,19 @@ local function categoryOfRaw(item)
             if d == "Weapon" or d == "WeaponCrafted" then result = "Weapon"; return end
             -- improvised weapon (pan/shovel/bat/axe/crowbar): store by FUNCTION, not the
             -- armoury -- a "<X>Weapon" label maps to its real home (ToolWeapon->Tools etc.).
-            if d and IMPROV_WEAPON_BASE[d] then result = IMPROV_WEAPON_BASE[d]; return end
+            if d and IMPROV_WEAPON_BASE[d] then
+                local home = IMPROV_WEAPON_BASE[d]
+                -- A hard-hitting "recreational weapon" (metal bat is SportsWeapon, dmg 1.1)
+                -- is a real weapon, not decor -> send it to the locker. Weak rec gear
+                -- (tennis racket 0.5, dumbbell 1.0) stays in its recreational home, and
+                -- functional tool-weapons (pan->Cooking, shovel->Gardening) are untouched.
+                if home == "Entertainment" then
+                    local sdmg = 0
+                    pcall(function() sdmg = item:getMaxDamage() end)
+                    if sdmg > 1.0 then result = "Weapon"; return end
+                end
+                result = home; return
+            end
             local dmg = 0
             pcall(function() dmg = item:getMaxDamage() end)
             if dmg > 1.0 then result = "Weapon"; return end
