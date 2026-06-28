@@ -733,13 +733,40 @@ local function smartSort(player)
         return nil
     end
 
+    -- free weight (headroom) of a container -- drives load-sharing + the overfill guard.
+    local function freeOf(c)
+        local mx, cur = 0, 0
+        pcall(function() mx = c:getMaxWeight() end)
+        pcall(function() cur = c:getCapacityWeight() end)
+        return (mx or 0) - (cur or 0)
+    end
+    -- copy + sort emptiest-first so items SPREAD across same-category containers instead
+    -- of cramming the first one to the brim. Never mutates the input list.
+    local function byFreeDesc(list)
+        local out = {}
+        if list then for _, c in ipairs(list) do out[#out+1] = c end end
+        table.sort(out, function(a, b) return freeOf(a) > freeOf(b) end)
+        return out
+    end
+    local isDesig = {}
+    for _, st in ipairs(stores) do if st.designated then isDesig[st.c] = true end end
+
     -- EMPIRE PATCH: spill list for a category = its priority homes, THEN every other
-    -- unlabelled box (so a full primary overflows into any box with room, empties included).
+    -- unlabelled box. Load-shared WITHIN each tier (emptiest first) but tiers kept in
+    -- order, so fresh food still fills fridges/designated homes before loose shelves --
+    -- it just spreads evenly across them instead of jamming the first.
     local function spillCands(cat)
         local out, seen = {}, {}
-        local pri = destsFor[cat]
-        if pri then for _, c in ipairs(pri) do if not seen[c] then seen[c] = true; out[#out+1] = c end end end
-        for _, g in ipairs(generals) do if not seen[g] then seen[g] = true; out[#out+1] = g end end
+        local desig, gen = {}, {}
+        for _, c in ipairs(destsFor[cat] or {}) do
+            if isDesig[c] then desig[#desig + 1] = c else gen[#gen + 1] = c end
+        end
+        local function push(list)
+            for _, c in ipairs(list) do if not seen[c] then seen[c] = true; out[#out + 1] = c end end
+        end
+        push(byFreeDesc(desig))      -- designated homes (fridges/tagged/affinity), emptiest first
+        push(byFreeDesc(gen))        -- general boxes already holding this category
+        push(byFreeDesc(generals))   -- any general box at all
         return out
     end
 
@@ -885,7 +912,19 @@ local function smartSort(player)
         for _, dest in ipairs(candidates) do
             if dest ~= fromCont then
                 local fits = false
-                pcall(function() fits = dest:isItemAllowed(item) and dest:hasRoomFor(player, item) end)
+                pcall(function()
+                    local ok = dest:isItemAllowed(item) and dest:hasRoomFor(player, item)
+                    -- OVERFILL GUARD: some containers report room past their weight cap,
+                    -- which is how a box ends up at 60/50. Enforce the cap ourselves.
+                    if ok then
+                        local mx, cur, iw = 0, 0, 0
+                        pcall(function() mx = dest:getMaxWeight() end)
+                        pcall(function() cur = dest:getCapacityWeight() end)
+                        pcall(function() iw = item:getWeight() end)
+                        if mx and mx > 0 and (cur + (iw or 0)) > mx + 0.001 then ok = false end
+                    end
+                    fits = ok
+                end)
                 if fits then
                     local ok = pcall(function() dest:addItem(item); fromCont:Remove(item) end)
                     if ok then touched[dest] = true; touched[fromCont] = true; return true end
@@ -901,7 +940,7 @@ local function smartSort(player)
             local cat = categoryOf(mv.item)
             if mv.magnet then
                 -- tag-pull: ONLY into a tagged container for this category. All full -> stay put.
-                if placeInto(mv.item, mv.from, taggedDests[cat]) then
+                if placeInto(mv.item, mv.from, byFreeDesc(taggedDests[cat])) then
                     moved = moved + 1; byCat[cat] = (byCat[cat] or 0) + 1
                 else
                     blocked = blocked + 1   -- tagged home(s) full; left exactly where it was
