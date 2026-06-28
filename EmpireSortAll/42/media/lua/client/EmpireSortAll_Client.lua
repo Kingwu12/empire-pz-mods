@@ -280,6 +280,22 @@ local function categoryOfRaw(item)
         -- each mod spawning its own junk bucket.
         local pb = patternBucket(disp)
         if pb then result = pb; return end
+        -- BEVERAGE RESCUE: modded energy drinks / sodas can be defined OUTSIDE the Food
+        -- class (even vanilla Pop lives in normal.txt), so they skip the food branch above
+        -- and would fall to Misc. Catch them by name keyword here, guarded against food
+        -- false-positives (chocolate/baking soda/root beer/butterscotch).
+        do
+            local nm = ""
+            pcall(function() nm = ((item:getName() or "") .. " " .. (item:getType() or "")):lower() end)
+            local guard = nm:find("choc", 1, true) or nm:find("cocoa", 1, true)
+                or nm:find("baking", 1, true) or nm:find("scotch", 1, true)
+                or nm:find("root beer", 1, true) or nm:find("rootbeer", 1, true)
+                or nm:find("ginger beer", 1, true) or nm:find("gingerbeer", 1, true)
+            if not guard then
+                if hayHas(nm, ALCOHOL_WORDS) then result = "Alcohol"; return end
+                if hayHas(nm, DRINK_WORDS) then result = "Drinks"; return end
+            end
+        end
         -- still novel: keep the game's own label as a bucket (rare long-tail)
         if disp and disp ~= "" then result = disp; return end
         -- last resort: the item's broad type category
@@ -1624,8 +1640,8 @@ local function onFillInventoryObjectContextMenu(player, context, items)
     local playerObj = player
     if type(player) == "number" then playerObj = getSpecificPlayer(player) end
     if not playerObj then return end
-    context:addOption("Smart Sort Base", playerObj, smartSort)
-    context:addOption("Consolidate Duplicates", playerObj, consolidateTypes)
+    -- (Smart Sort / Consolidate removed from the item right-click menu to keep it clean --
+    --  use the Numpad3 / Numpad4 keys for those.)
     -- if a bag is right-clicked, offer a one-click "keep this bag" toggle (loadout bag)
     local it = items and items[1]
     if it and type(it) == "table" and it.items then it = it.items[1] end
