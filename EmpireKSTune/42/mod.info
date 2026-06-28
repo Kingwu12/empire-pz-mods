@@ -1,0 +1,5 @@
+name=Empire KS Tune
+id=EmpireKSTune
+description=Re-asserts preferred Knox Survivors sandbox balance (dormant distance, survivor damage, base radius, retreat threshold) at game start, so the tuning applies on an existing save with no binary edits. Reversible: disable to revert. Requires Knox Survivors.
+poster=
+url=
