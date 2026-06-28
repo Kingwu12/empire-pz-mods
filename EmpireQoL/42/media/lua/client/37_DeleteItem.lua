@@ -7,15 +7,22 @@
 local CONFIRM = true
 
 -- Flatten whatever the context menu handed us (single items + stacks) into a flat item list.
+-- PZ can hand us the SAME item twice -- once standalone and once inside its stack wrapper --
+-- so we dedupe by item identity (a set), exactly like vanilla's ISRemoveItemTool. Without this,
+-- a single item would count as 2.
 local function collectItems(items)
-    local out = {}
+    local seen, out = {}, {}
+    local function add(it)
+        if instanceof(it, "InventoryItem") and not seen[it] then
+            seen[it] = true
+            out[#out + 1] = it
+        end
+    end
     for _, v in ipairs(items) do
         if instanceof(v, "InventoryItem") then
-            out[#out + 1] = v
+            add(v)
         elseif type(v) == "table" and v.items then
-            for _, it in ipairs(v.items) do
-                if instanceof(it, "InventoryItem") then out[#out + 1] = it end
-            end
+            for _, it in ipairs(v.items) do add(it) end
         end
     end
     return out

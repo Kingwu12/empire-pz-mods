@@ -28,7 +28,7 @@ local CLASSY  = { "BedroomDresserClassy","BedroomSidetableClassy","WardrobeClass
 -- seed RF items instead, keeping the same tier feel (rural = shotguns/hunting/revolver,
 -- average = pistol/shotgun, wealthy = home-defense handgun).
 local GUNS_REDNECK = { "RF_Remington870","RF_SingleBarrelShotgun","RF_Mossberg590","RF_Remington700","RF_Mini14","RF_SKS","RF_ColtPython" }
-local GUNS_GENERIC = { "RF_M9","RF_BHP","RF_Remington870","RF_SingleBarrelShotgun" }
+local GUNS_GENERIC = { "RF_M9","RF_M1911A1","RF_Remington870","RF_SingleBarrelShotgun" }
 local GUNS_CLASSY  = { "RF_M9","RF_P226","RF_Glock18","RF_M1911A1" }
 local AMMO_BOXES   = { "RF_12GaugeBox","RF_9x19Box","RF_357Box","RF_45Box","RF_3006Box","RF_762x39Box" }
 
