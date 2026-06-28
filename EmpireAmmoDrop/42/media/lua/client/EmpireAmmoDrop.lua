@@ -29,27 +29,31 @@ local CFG = {
 }
 
 -- ---- candidate ammo (validated at game start; missing ones are dropped silently) ----
--- weight = how common. pistol/shotgun common, rifle rarer. covers vanilla + Guns of '93.
+-- weight = how common. pistol/shotgun common, rifle rarer.
+-- REALFIREARMS: this world runs RealFirearms, which DELETES all vanilla + guns93 ammo from
+-- loot and replaces every gun with an RF gun. RF guns feed only on RF rounds (Base.RF_*Bullets),
+-- so we drop those -- vanilla rounds would just get purged by RF and never feed your guns.
 local POOLS_RAW = {
     pistol = {
-        {"Base.Bullets9mm",10},{"Base.Bullets45",6},{"Base.Bullets38",6},{"Base.Bullets357",4},
-        {"Base.Bullets44",3},{"Base.380Bullets",4},{"Base.40Bullets",4},{"Base.10mmBullets",2},
-        {"Base.22Bullets",5},{"Base.45LCBullets",2},
-        {"guns93.380Bullets",4},{"guns93.40Bullets",4},{"guns93.10mmBullets",2},{"guns93.45LCBullets",2},{"guns93.22Bullets",5},
+        {"Base.RF_9x19Bullets",10},{"Base.RF_45Bullets",6},{"Base.RF_380Bullets",5},
+        {"Base.RF_357Bullets",4},{"Base.RF_9x18Bullets",3},{"Base.RF_762x25Bullets",2},
+        {"Base.RF_500Bullets",1},
     },
     shotgun = {
-        {"Base.ShotgunShells",10},
+        {"Base.RF_12GaugeBullets",10},
     },
     rifle = {
-        {"Base.556Bullets",6},{"Base.308Bullets",5},{"Base.3030Bullets",5},{"Base.3006Bullets",4},
-        {"Base.76239Bullets",4},{"Base.30CarBullets",2},{"Base.792Bullets",2},{"Base.223Bullets",4},
-        {"guns93.76239Bullets",4},{"guns93.3006Bullets",4},{"guns93.30CarBullets",2},{"guns93.792Bullets",2},
+        {"Base.RF_556x45Bullets",8},{"Base.RF_762x39Bullets",8},{"Base.RF_762x51Bullets",5},
+        {"Base.RF_545x39Bullets",4},{"Base.RF_762x54Bullets",4},{"Base.RF_3006Bullets",3},
+        {"Base.RF_30CarbineBullets",2},{"Base.RF_792x33Bullets",2},{"Base.RF_792x57Bullets",2},
+        {"Base.RF_127x55Bullets",1},
     },
 }
 -- box candidates (validated too; if none exist we just drop more loose rounds)
 local BOX_RAW = {
-    "Base.Bullets9mmBox","Base.Bullets45Box","Base.Bullets38Box","Base.Bullets357Box",
-    "Base.ShotgunShellsBox","Base.556Box","Base.308Box","Base.3030Box",
+    "Base.RF_9x19Box","Base.RF_45Box","Base.RF_380Box","Base.RF_357Box",
+    "Base.RF_12GaugeBox","Base.RF_556x45Box","Base.RF_762x39Box","Base.RF_762x51Box",
+    "Base.RF_545x39Box","Base.RF_762x54Box","Base.RF_3006Box","Base.RF_30CarbineBox",
 }
 
 local POOLS = { pistol = {}, shotgun = {}, rifle = {} }
