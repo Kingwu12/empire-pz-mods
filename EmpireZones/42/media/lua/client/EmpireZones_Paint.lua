@@ -45,6 +45,13 @@ local function showZone(playerNum, zone)
     end)
 end
 
+-- two-corner BASE definition (reliable rectangle; same result as SSC drag-select)
+local basePending = nil
+local function ensureBaseZone()
+    for _, z in pairs(EZ.all()) do if z.type == "base" then return z end end
+    return EZ.get(EZ.newZone("Base", "base"))
+end
+
 local function onFill(player, context, worldobjects)
     local pl = pObj(player); if not pl then return end
     local sq = clickedSquare(worldobjects, player); if not sq then return end
@@ -54,6 +61,26 @@ local function onFill(player, context, worldobjects)
     local opt = context:addOption("Empire Zones", nil, nil)
     local sub = ISContextMenu:getNew(context)
     context:addSubMenu(opt, sub)
+
+    -- BASE: pick two corners -> rectangle base, highlighted, and KS follows it
+    if not basePending then
+        sub:addOption("Define base: corner 1 here", pl, function()
+            basePending = { x = x, y = y, z = z }
+            halo(pl, "Base corner 1 set - right-click the opposite corner.")
+        end)
+    else
+        sub:addOption("Define base: FINISH rectangle here", pl, function()
+            local c = basePending; basePending = nil
+            local zone = ensureBaseZone()
+            local ax1, ax2 = math.min(c.x, x), math.max(c.x, x)
+            local ay1, ay2 = math.min(c.y, y), math.max(c.y, y)
+            for ax = ax1, ax2 do for ay = ay1, ay2 do EZ.addTile(zone.id, ax, ay, z) end end
+            showZone(playerNum, zone)
+            halo(pl, "Base set: " .. (ax2 - ax1 + 1) .. "x" .. (ay2 - ay1 + 1) .. " (this floor)")
+            pcall(function() if EmpireBases and EmpireBases.syncKSToOurBase then EmpireBases.syncKSToOurBase(pl) end end)
+        end)
+        sub:addOption("Define base: cancel", pl, function() basePending = nil; halo(pl, "Cancelled.") end)
+    end
 
     local here = EZ.zoneAt(x, y, z)
     if here then

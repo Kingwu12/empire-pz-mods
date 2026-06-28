@@ -168,6 +168,36 @@ function EmpireBases.inBase(playerObj)
     return EmpireBases.activeBase(playerObj) ~= nil
 end
 
+-- Point KnoxSurvivors' home base at OUR defined base and size its radius to cover
+-- it, so survivors home to our base instead of KS's default tiny circle. KS only
+-- supports centre+radius, so this matches our base as a circle that COVERS it --
+-- not the exact shape (that needs overriding KS's private guard AI).
+function EmpireBases.syncKSToOurBase(player)
+    player = player or getSpecificPlayer(0)
+    if not player or not KS or not KS.SetPlayerBase then return false end
+    local zb = EmpireBases.getEmpireZoneBase()
+    if not zb then return false end
+    local cx = math.floor((zb.x1 + zb.x2) / 2)
+    local cy = math.floor((zb.y1 + zb.y2) / 2)
+    local cz = zb.zmin or 0
+    local fit = math.max(math.ceil((zb.x2 - zb.x1) / 2), math.ceil((zb.y2 - zb.y1) / 2)) + 1
+    local ok = false
+    pcall(function()
+        local cell = getCell()
+        local sq = cell and cell:getGridSquare(cx, cy, cz)
+        if not sq then return end
+        local sv = SandboxVars and SandboxVars.KnoxSurvivors
+        if sv then
+            sv.MaxBaseRadius = math.max(sv.MaxBaseRadius or 24, fit)
+            sv.BaseMarkerRadius = fit
+        end
+        local base = KS.SetPlayerBase(player, sq)
+        if base then base.radius = fit; ok = true end
+        if KS.RefreshBaseMarkers then KS.RefreshBaseMarkers(true) end
+    end)
+    return ok
+end
+
 -- Scan rectangle for sort/craft/build.
 --   In a base -> the WHOLE base on the player's current floor.
 --   Otherwise -> a radius box around the player (radiusFallback, default 12).
