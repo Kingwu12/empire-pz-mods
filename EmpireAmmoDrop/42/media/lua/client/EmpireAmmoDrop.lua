@@ -10,12 +10,13 @@
 
 local CFG = {
     -- ordinary zombie: chance to carry ANY ammo, and how much (loose rounds)
-    normalCarryChance = 0.15,     -- ~15% ON-BODY carry. Household ownership is ~45%, but
-                                  -- that's guns AT HOME (-> house loot), not rounds on a
-                                  -- shambling corpse. Low here = ammo stays a real resource.
-    normalMin         = 1,
-    normalMax         = 6,        -- a few loose rounds: what was in their gun + maybe a spare
-    normalBoxChance   = 0.03,     -- rare: a civilian with a small box
+    normalCarryChance = 0.20,     -- ~1 in 5 ON-BODY carry. Kentucky is gun-heavy, but most
+                                  -- guns are AT HOME (-> house loot), not on a shambling
+                                  -- corpse. A minority carrying keeps ammo a real resource.
+    normalMin         = 4,
+    normalMax         = 11,       -- a carrier has roughly a partial mag's worth (~7 avg):
+                                  -- what was loaded + a couple spares, not a single round.
+    normalBoxChance   = 0.05,     -- occasional: a civilian with a small box
 
     -- special zombies by outfit (a dead cop SHOULD have mags)
     cop   = { chance = 0.80, min = 12, max = 34, boxChance = 0.25, pool = "pistol", shotgunChance = 0.15 },
@@ -56,7 +57,10 @@ local BOXES = {}
 local ready = false
 
 local function itemExists(ft)
-    local ok, res = pcall(function() return InventoryItemFactory.CreateItem(ft) end)
+    -- use the script manager (returns nil for missing) instead of CreateItem -- other
+    -- mods (ZuperCart) override CreateItem to THROW on a missing item, which spammed a
+    -- logged error per missing type at startup. getItem never instantiates and never throws.
+    local ok, res = pcall(function() return getScriptManager():getItem(ft) end)
     return ok and res ~= nil
 end
 
@@ -168,7 +172,12 @@ local function onZombieDead(zombie)
     pcall(function() dropForProfile(inv, prof) end)
 end
 
-Events.OnGameStart.Add(buildPools)
-Events.OnZombieDead.Add(onZombieDead)
+-- guard against double-registration if the file is hot-reloaded mid-session, which would
+-- otherwise add a second OnZombieDead handler and double every drop.
+if not EmpireAmmoDrop_Registered then
+    EmpireAmmoDrop_Registered = true
+    Events.OnGameStart.Add(buildPools)
+    Events.OnZombieDead.Add(onZombieDead)
+end
 
-print("[EmpireAmmoDrop] loaded -- zombies drop ammo on death (30% normal, cops/soldiers rich). Disable the AmmoLootDrop workshop mods to avoid double-up.")
+print("[EmpireAmmoDrop] loaded -- zombies drop ammo on death (~20% of normals carry ~4-11 rounds, cops/soldiers rich). Disable the AmmoLootDrop workshop mods to avoid double-up.")
