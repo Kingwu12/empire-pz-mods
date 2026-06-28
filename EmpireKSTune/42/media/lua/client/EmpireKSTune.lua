@@ -14,6 +14,16 @@ M.overrides = {
     SurvivorDamageMultiplier = 1.60,  -- KS default 0.75
     RetreatHealthPercent     = 25,    -- KS default 35
 
+    -- DURABILITY: KS survivors are zombie-SHELLS the mod puppets; when a big hit (esp.
+    -- a vehicle) blows past their health, KS loses control and the shell reverts to a
+    -- hostile zombie in your base. Making the shells tanky keeps KS in control through
+    -- bumps + combat, so far fewer "turned into a zombie for no reason" events.
+    -- (Won't save them from a full-speed truck -- nothing will -- but stops the glancing
+    -- hits and combat scratches that were reverting them.)
+    SurvivorDurabilityMultiplier = 2.5,  -- KS default 1.0 (min 0.5). Raise toward 3-4 if
+                                          -- they still revert too easily; lower if they
+                                          -- feel unkillable in fights.
+
     -- BODY-COUNT knobs REVERTED to KS defaults. Raising these keeps more
     -- survivors fully rendered/animated near you = engine render cost, which is
     -- the FPS bottleneck. Left off until FPS is fixed.
