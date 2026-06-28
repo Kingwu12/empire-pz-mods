@@ -229,14 +229,24 @@ local function categoryOfRaw(item)
         -- food: split fresh from long-life so fresh routes to the fridge/freezer
         if mapped == "Food" or (not mapped and instanceof(item, "Food")) then
             local t = item:getType() or ""
-            -- ALCOHOL -> own shelf. Engine flag first, name/type backup for items missing it.
-            local alc = false
-            pcall(function() alc = item:isAlcoholic() end)
             local hay = t:lower()
             pcall(function() hay = (t .. " " .. (item:getName() or "")):lower() end)
-            if alc or hayHas(hay, ALCOHOL_WORDS) then result = "Alcohol"; return end
-            -- SOFT DRINKS -> drinks shelf (plain water was mapped to Water earlier).
-            if DRINK_TYPES[t] or hayHas(hay, DRINK_WORDS) then result = "Drinks"; return end
+            -- ALCOHOL: the engine flag is authoritative -- trust it first.
+            local alc = false
+            pcall(function() alc = item:isAlcoholic() end)
+            if alc then result = "Alcohol"; return end
+            -- Keyword matching is a backup, but it's substring-based so it needs a guard:
+            -- "chocolate" contains "cola", "baking soda" contains "soda", "butterscotch"
+            -- contains "scotch", "root beer" contains "beer". These are food, not drinks.
+            local foodGuard = hay:find("choc",1,true) or hay:find("cocoa",1,true)
+                or hay:find("baking",1,true) or hay:find("scotch",1,true)
+                or hay:find("licoric",1,true) or hay:find("root beer",1,true)
+                or hay:find("rootbeer",1,true) or hay:find("ginger beer",1,true)
+                or hay:find("gingerbeer",1,true)
+            if not foodGuard then
+                if hayHas(hay, ALCOHOL_WORDS) then result = "Alcohol"; return end
+                if DRINK_TYPES[t] or hayHas(hay, DRINK_WORDS) then result = "Drinks"; return end
+            end
             -- remaining food: long-life (pantry) vs fresh (fridge)
             if DRY_FOOD[t] then result = "DryFood"; return end
             local off = 0
@@ -1307,7 +1317,7 @@ local TAG_GROUPS = {
 local function onClearTag(playerNum, obj)
     writeTag(obj, nil)
     local p = getSpecificPlayer(playerNum)
-    if p then HaloTextHelper.addTextWithArrow(p, "Lock cleared", "[br/]", false, HaloTextHelper.getColorWhite()) end
+    if p then pcall(function() HaloTextHelper.addTextWithArrow(p, "Lock cleared", "[br/]", false, HaloTextHelper.getColorRed()) end) end
 end
 
 local PRETTY = {
@@ -1340,16 +1350,18 @@ local function onToggleTag(playerNum, obj, cat)
     writeTag(obj, table.concat(parts, ","))
     local p = getSpecificPlayer(playerNum)
     if not p then return end
-    if next(set) == nil then
-        HaloTextHelper.addTextWithArrow(p, "Lock cleared", "[br/]", false, HaloTextHelper.getColorWhite())
-        p:Say("Unlocked -- takes anything now.")
-    else
-        local added = set[cat] ~= nil
-        local col = added and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorRed()
-        local verb = added and "+ " or "- "
-        HaloTextHelper.addTextWithArrow(p, verb .. (PRETTY[cat] or cat) .. "   now: " .. prettyTags(set), "[br/]", false, col)
-        p:Say("This one holds: " .. prettyTags(set) .. ".")
-    end
+    pcall(function()
+        if next(set) == nil then
+            HaloTextHelper.addTextWithArrow(p, "Lock cleared", "[br/]", false, HaloTextHelper.getColorRed())
+            p:Say("Unlocked -- takes anything now.")
+        else
+            local added = set[cat] ~= nil
+            local col = added and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorRed()
+            local verb = added and "+ " or "- "
+            HaloTextHelper.addTextWithArrow(p, verb .. (PRETTY[cat] or cat) .. "   now: " .. prettyTags(set), "[br/]", false, col)
+            p:Say("This one holds: " .. prettyTags(set) .. ".")
+        end
+    end)
 end
 
 local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, test)
