@@ -47,8 +47,10 @@ local CAT_MAP = {
     -- ===== COMBAT =====
     Weapon="Weapon", WeaponCrafted="Weapon", WepMelee="Weapon", WepShield="Weapon", WepBow="Weapon",
     WepRange="Gun", WepFire="Gun",
-    WeaponPart="GunParts", WepPart="GunParts",
-    Ammo="Ammo", WepAmmoMag="Ammo",
+    MilitaryFirearms="Gun", CivilianFirearms="Gun", PoliceFirearms="Gun",
+    WeaponPart="GunParts", WepPart="GunParts", FirearmPart="GunParts",
+    Ammo="Ammo", WepAmmoMag="Ammo", AmmoBox="Ammo", AmmoCarton="Ammo",
+    Bullets="Ammo", Casings="Ammo", Magazine="Ammo",
     Explosives="Explosives", WepBomb="Explosives",
     -- ===== MEDICAL (incl. HC drugs/pills, which are Type=Food but belong with meds) =====
     FirstAid="Medical", Bandage="Medical", Medical="Medical", Drugs="Medical",
@@ -56,14 +58,16 @@ local CAT_MAP = {
     Tool="Tools", ToolWeapon="Tools",
     VehicleMaintenance="VehicleParts",
     Electronics="Electronics", Communications="Electronics", CraftElec="Electronics", -- HC CraftElec = electronics
-    LightSource="Light",
+    Devices="Electronics",
+    Tuning="VehicleParts", TuningService="VehicleParts",
+    LightSource="Light", FireSource="Light",
     -- ===== OUTDOORS / SURVIVAL (HC Sur* family + manure -> gardening) =====
     Gardening="Gardening", SurFarm="Gardening", SurFor="Gardening", SurApi="Gardening", AnimalPoop="Gardening",
     Fishing="Fishing", SurFish="Fishing", SurBug="Fishing",
     Trapping="Trapping", SurTrap="Trapping", SurHunt="Trapping",
     Camping="Camping", SurCamp="Camping",
     -- ===== MATERIALS / CRAFTING (HC Craft* metalwork/carpentry/masonry/mining/bone/gem/etc.) =====
-    Material="Materials", Paint="Materials", Mineral="Materials", Fuel="Materials", Tile="Materials",
+    Material="Materials", RecipeResource="Materials", Paint="Materials", Mineral="Materials", Fuel="Materials", Tile="Materials",
     Craft="Materials", Crafting="Materials", CraftMet="Materials", CraftMetal="Materials",
     CraftCarp="Materials", CraftMas="Materials", CraftMine="Materials", CraftBone="Materials",
     CraftGem="Materials", CraftRec="Materials", CraftRef="Materials", CraftInd="Materials",
@@ -79,26 +83,75 @@ local CAT_MAP = {
     Entertainment="Entertainment", Sports="Entertainment", Toy="Entertainment",
     Instrument="Entertainment", Fitness="Entertainment",
     -- ===== CLOTHING (HC Cloth* families + appearance/accessories) =====
-    Clothing="Clothing", Accessory="Clothing", Appearance="Clothing", Appear="Clothing",
-    ClothP="Clothing", ClothN="Clothing", ClothM="Clothing",
+    Clothing="Clothing", ClothP="Clothing", ClothN="Clothing", ClothM="Clothing",
+    Accessory="Accessory",
+    Appearance="Household", Appear="Household",
+    -- ARMOUR (body armour / protective gear -> its own shelf with the combat kit)
+    ProtectiveGear="Armor", BulletproofVest="Armor",
     -- ===== CONTAINERS / FURNITURE / HOUSEHOLD =====
     Bag="Bags", Container="Bags",
     Furniture="Furniture",
     Household="Household", Cleaning="Household",
     -- ===== JUNK / MISC (HC Useless/Trash/Money + vanilla corpse/body labels) =====
-    Misc="Misc", Junk="Misc", Useless="Misc", Trash="Misc", Money="Misc", Item="Misc",
+    Misc="Misc", Junk="Misc", Useless="Misc", Trash="Misc", Money="Misc", Item="Misc", Memento="Misc",
     Corpse="Misc", MaleBody="Misc", Wound="Misc", ZedDmg="Misc", Hidden="Misc", Security="Misc",
-    Badger="Misc", Beaver="Misc", Bunny="Misc", Fox="Misc", Hedgehog="Misc",
-    Mole="Misc", Raccoon="Misc", Squirrel="Misc",
+    -- ===== ANIMAL PARTS (butchered parts -- vanilla labels each species separately) =====
+    AnimalPart="AnimalParts",
+    Badger="AnimalParts", Beaver="AnimalParts", Bunny="AnimalParts", Fox="AnimalParts",
+    Hedgehog="AnimalParts", Mole="AnimalParts", Raccoon="AnimalParts", Squirrel="AnimalParts",
 }
 
--- Light tools that carry the "ToolWeapon" label but are NOT melee weapons -- they stay
--- in the tools bucket instead of clogging the weapon locker. Everything else labelled
--- ToolWeapon (axe, hand axe, crowbar, etc.) is treated as a melee weapon.
-local LIGHT_TOOLS = {
-    Hammer=true, BallPeenHammer=true, ClubHammer=true, Screwdriver=true,
-    Wrench=true, PipeWrench=true, Saw=true, HandSaw=true, GardenSaw=true,
+-- ===== improvised weapons -> stored by FUNCTION, not the armoury =====
+-- A frying pan / shovel / bat / axe is wielded as a weapon (DisplayCategory "<X>Weapon")
+-- but you STORE it where it's used. Map each suffix label to its real home. Only a
+-- DESIGNED weapon (DisplayCategory Weapon/WeaponCrafted) goes to the weapon locker.
+local IMPROV_WEAPON_BASE = {
+    ToolWeapon="Tools", CookingWeapon="Cooking", HouseholdWeapon="Household",
+    GardeningWeapon="Gardening", SportsWeapon="Entertainment", FishingWeapon="Fishing",
+    InstrumentWeapon="Entertainment", JunkWeapon="Misc", MaterialWeapon="Materials",
+    AnimalPartWeapon="AnimalParts", FirstAidWeapon="Medical",
+    VehicleMaintenanceWeapon="VehicleParts",
 }
+
+-- ===== drink split (used inside the food branch) =====
+-- Alcohol and soft drinks come off the food shelves into their own homes. Plain water
+-- is mapped to "Water" before the food branch, so it never reaches here.
+local ALCOHOL_WORDS = { "beer","wine","whiskey","whisky","vodka","bourbon","tequila",
+    "brandy","liquor","cognac","scotch","moonshine","champagne","spiced rum" }
+local DRINK_TYPES  = { Pop=true, PopBottle=true }
+local DRINK_WORDS  = { "soda","cola","juice","lemonade","energydrink","energy drink",
+    "softdrink","soft drink","kool","gatorade","sports drink","iced tea" }
+local function hayHas(hay, words)
+    for _, w in ipairs(words) do if hay:find(w, 1, true) then return true end end
+    return false
+end
+
+-- ===== animal-part labels: vanilla fragments these into one bucket PER SPECIES =====
+local ANIMAL_WORDS = { "raccoon","fox","badger","beaver","bunny","rabbit","hedgehog",
+    "mole","squirrel","deer","possum","skunk","carcass","pelt","antler","hoof","talon" }
+
+-- ===== pattern fallback =====
+-- Unmapped labels resolve by keyword so a NEW mod self-classifies instead of spawning a
+-- junk bucket per mod (the main cause of category sprawl). Common cases fold together;
+-- only a genuinely novel label still falls through to its own bucket downstream.
+local function patternBucket(disp)
+    if not disp or disp == "" then return nil end
+    local d = disp:lower()
+    if d:find("firearm", 1, true) then return "Gun" end
+    if d:find("ammo", 1, true) or d:find("bullet", 1, true) or d:find("casing", 1, true)
+        or d:find("magazine", 1, true) or d:find("shell", 1, true) then return "Ammo" end
+    if d:find("bulletproof", 1, true) or d:find("protection", 1, true)
+        or d:find("armor", 1, true) or d:find("armour", 1, true)
+        or d:find("plate carrier", 1, true) or d:find("kevlar", 1, true) then return "Armor" end
+    if d:find("frockin", 1, true) then return "Clothing" end
+    if d:find("first aid", 1, true) or d:find("firstaid", 1, true) or d:find("medic", 1, true) then return "Medical" end
+    if d:find("tuning", 1, true) then return "VehicleParts" end
+    if d:find("device", 1, true) then return "Electronics" end
+    if d:find("journal", 1, true) or d:find("skillbook", 1, true) then return "SkillBooks" end
+    if d:find("recipe", 1, true) or d:find("scrap", 1, true) then return "Materials" end
+    for _, w in ipairs(ANIMAL_WORDS) do if d:find(w, 1, true) then return "AnimalParts" end end
+    return nil
+end
 
 local function categoryOfRaw(item)
     local result = "Misc"
@@ -120,16 +173,12 @@ local function categoryOfRaw(item)
             local d = nil
             pcall(function() d = item:getDisplayCategory() end)
             if d == "Weapon" or d == "WeaponCrafted" then result = "Weapon"; return end
+            -- improvised weapon (pan/shovel/bat/axe/crowbar): store by FUNCTION, not the
+            -- armoury -- a "<X>Weapon" label maps to its real home (ToolWeapon->Tools etc.).
+            if d and IMPROV_WEAPON_BASE[d] then result = IMPROV_WEAPON_BASE[d]; return end
             local dmg = 0
             pcall(function() dmg = item:getMaxDamage() end)
             if dmg > 1.0 then result = "Weapon"; return end
-            -- ToolWeapon fallback: axes/crowbars/hand-axes carry the "ToolWeapon" label and
-            -- getMaxDamage reads 0 on some items -- so treat ToolWeapon as a melee weapon
-            -- unless it's a light tool (hammer/screwdriver/etc.) we explicitly exclude.
-            if d == "ToolWeapon" then
-                local t = item:getType() or ""
-                if not LIGHT_TOOLS[t] then result = "Weapon"; return end
-            end
             -- not a real weapon: do NOT return -- fall through to normal mapping below
         end
         if instanceof(item, "Ammo") then result = "Ammo"; return end
@@ -147,12 +196,30 @@ local function categoryOfRaw(item)
         -- aren't Clothing instances and report no body location, so they still sort to Bags.
         do
             local worn = instanceof(item, "Clothing")
-            if not worn then
-                local bl = nil
-                pcall(function() bl = item:getBodyLocation() end)
-                if bl and bl ~= "" and bl ~= "Bag" then worn = true end
+            local bl = nil
+            pcall(function() bl = item:getBodyLocation() end)
+            if not worn and bl and bl ~= "" and bl ~= "Bag" then worn = true end
+            if worn then
+                local d = nil
+                pcall(function() d = item:getDisplayCategory() end)
+                -- ARMOUR: body armour / protective gear -> stored with combat kit
+                if d == "ProtectiveGear" or d == "BulletproofVest" or patternBucket(d) == "Armor" then
+                    result = "Armor"; return
+                end
+                local nm = ""; pcall(function() nm = (item:getName() or ""):lower() end)
+                if nm:find("bulletproof",1,true) or nm:find("kevlar",1,true)
+                   or nm:find("plate carrier",1,true) or nm:find(" vest",1,true) then
+                    result = "Armor"; return
+                end
+                -- ACCESSORY: jewellery / watches / belts / glasses -> their own shelf
+                if d == "Accessory" then result = "Accessory"; return end
+                local accSlots = { Necklace=true, Necklace_Long=true, Ears=true, EarTop=true,
+                    Nose=true, BellyButton=true, Right_MiddleFinger=true, Left_MiddleFinger=true,
+                    Right_RingFinger=true, Left_RingFinger=true, Belt=true, BeltExtra=true,
+                    Wrist=true, Eyes=true }
+                if bl and accSlots[bl] then result = "Accessory"; return end
+                result = "Clothing"; return
             end
-            if worn then result = "Clothing"; return end
         end
 
         local disp = nil
@@ -162,6 +229,15 @@ local function categoryOfRaw(item)
         -- food: split fresh from long-life so fresh routes to the fridge/freezer
         if mapped == "Food" or (not mapped and instanceof(item, "Food")) then
             local t = item:getType() or ""
+            -- ALCOHOL -> own shelf. Engine flag first, name/type backup for items missing it.
+            local alc = false
+            pcall(function() alc = item:isAlcoholic() end)
+            local hay = t:lower()
+            pcall(function() hay = (t .. " " .. (item:getName() or "")):lower() end)
+            if alc or hayHas(hay, ALCOHOL_WORDS) then result = "Alcohol"; return end
+            -- SOFT DRINKS -> drinks shelf (plain water was mapped to Water earlier).
+            if DRINK_TYPES[t] or hayHas(hay, DRINK_WORDS) then result = "Drinks"; return end
+            -- remaining food: long-life (pantry) vs fresh (fridge)
             if DRY_FOOD[t] then result = "DryFood"; return end
             local off = 0
             pcall(function() off = item:getOffAgeMax() or 0 end)
@@ -170,7 +246,12 @@ local function categoryOfRaw(item)
         end
 
         if mapped then result = mapped; return end
-        -- unmapped (incl. modded) labels become their own bucket, named by the game
+        -- unmapped: try keyword patterns so new/modded labels self-classify (firearm->Gun,
+        -- frockin->Clothing, protection->Armor, animal names->AnimalParts, etc.) instead of
+        -- each mod spawning its own junk bucket.
+        local pb = patternBucket(disp)
+        if pb then result = pb; return end
+        -- still novel: keep the game's own label as a bucket (rare long-tail)
         if disp and disp ~= "" then result = disp; return end
         -- last resort: the item's broad type category
         local cat = item:getCategory() or "Misc"
@@ -281,12 +362,12 @@ end
 
 -- ---- tags (persisted on the furniture object's ModData, survives save/load) ----
 local VALID = {
-    Perishable=true, DryFood=true, Water=true, Cooking=true, Compost=true,
-    Gun=true, Weapon=true, Ammo=true, GunParts=true, Explosives=true,
+    Perishable=true, DryFood=true, Water=true, Drinks=true, Alcohol=true, Cooking=true, Compost=true,
+    Gun=true, Weapon=true, Ammo=true, GunParts=true, Explosives=true, Armor=true,
     Medical=true, Tools=true, VehicleParts=true, Materials=true, Chemicals=true, Electronics=true,
-    Light=true, Gardening=true, Fishing=true, Trapping=true, Camping=true, Animals=true,
+    Light=true, Gardening=true, Fishing=true, Trapping=true, Camping=true, Animals=true, AnimalParts=true,
     Books=true, SkillBooks=true, Entertainment=true,
-    Clothing=true, Bags=true, Furniture=true, Household=true, Misc=true,
+    Clothing=true, Accessory=true, Bags=true, Furniture=true, Household=true, Misc=true,
 }
 
 -- Tags live in ONE persisted global table keyed by the container's WORLD POSITION
@@ -615,10 +696,10 @@ local function smartSort(player)
     -- round-robin any general container to categories still without a destination
     if #generals > 0 then
         local CATS = {
-            "Perishable","DryFood","Water","Cooking","Gun","Weapon","Ammo","GunParts",
-            "Explosives","Medical","Tools","VehicleParts","Materials","Chemicals","Electronics",
-            "Light","Gardening","Fishing","Trapping","Camping","Animals","Books","SkillBooks",
-            "Entertainment","Clothing","Bags","Furniture","Household","Misc",
+            "Perishable","DryFood","Water","Drinks","Alcohol","Cooking","Gun","Weapon","Ammo","GunParts",
+            "Explosives","Armor","Medical","Tools","VehicleParts","Materials","Chemicals","Electronics",
+            "Light","Gardening","Fishing","Trapping","Camping","Animals","AnimalParts","Books","SkillBooks",
+            "Entertainment","Clothing","Accessory","Bags","Furniture","Household","Misc",
         }
         local gi = 0
         for _, cat in ipairs(CATS) do
@@ -947,14 +1028,16 @@ local function smartSort(player)
     end
 
     local LABELS = {
-        Perishable="fridge", DryFood="dry food", Water="water", Cooking="cooking", Compost="compost",
+        Perishable="fridge", DryFood="dry food", Water="water", Drinks="drinks", Alcohol="alcohol",
+        Cooking="cooking", Compost="compost",
         Gun="guns", Weapon="melee", Ammo="ammo", GunParts="gun parts",
-        Explosives="explosives", Medical="meds", Tools="tools", VehicleParts="car parts",
+        Explosives="explosives", Armor="armour", Medical="meds", Tools="tools", VehicleParts="car parts",
         Materials="materials", Chemicals="chemicals", Electronics="electronics", Light="lights",
         Gardening="gardening", Fishing="fishing", Trapping="trapping", Camping="camping",
-        Animals="animals", Books="books", SkillBooks="skill books", Entertainment="entertainment",
-        Clothing="clothing", Bags="bags", Furniture="furniture", Household="household",
-        Misc="misc",
+        Animals="animals", AnimalParts="animal parts", Books="books", SkillBooks="skill books",
+        Entertainment="entertainment",
+        Clothing="clothing", Accessory="accessories", Bags="bags", Furniture="furniture",
+        Household="household", Misc="misc",
     }
     local parts = {}
     for cat, n in pairs(byCat) do parts[#parts+1] = n .. " " .. (LABELS[cat] or cat) end
@@ -1211,41 +1294,16 @@ end
 -- ============================================================
 -- Tagging: right-click a storage in the world -> "Empire Storage"
 -- ============================================================
+-- Each leaf is a single category key. The menu TOGGLES it on/off for the container, so
+-- one box can hold several categories at once (multi-select).
 local TAG_GROUPS = {
-    { "Food & Water", {
-        { "Fridge / fresh food", "Perishable" }, { "Canned & dry food", "DryFood" },
-        { "Water & drinks", "Water" }, { "Cooking gear", "Cooking" },
-        { "Compost bin (rotten food)", "Compost" },
-    }},
-    { "Weapons", {
-        { "Guns & Ammo", "Gun,Ammo" }, { "Guns only", "Gun" }, { "Ammo only", "Ammo" },
-        { "Melee weapons", "Weapon" }, { "Gun parts", "GunParts" }, { "Explosives", "Explosives" },
-    }},
-    { "Survival", {
-        { "Medical", "Medical" }, { "Tools", "Tools" }, { "Building materials", "Materials" },
-        { "Chemicals", "Chemicals" }, { "Electronics", "Electronics" }, { "Lights", "Light" },
-        { "Car parts", "VehicleParts" },
-    }},
-    { "Outdoors", {
-        { "Gardening", "Gardening" }, { "Fishing", "Fishing" },
-        { "Trapping", "Trapping" }, { "Camping", "Camping" }, { "Animals", "Animals" },
-    }},
-    { "Goods", {
-        { "Clothing", "Clothing" }, { "Bags", "Bags" }, { "Books", "Books" },
-        { "Skill books", "SkillBooks" }, { "Entertainment", "Entertainment" },
-        { "Household", "Household" }, { "Furniture", "Furniture" }, { "Misc", "Misc" },
-    }},
+    { "Food & drink", { "Perishable", "DryFood", "Cooking", "Water", "Drinks", "Alcohol", "Compost" } },
+    { "Weapons", { "Gun", "Weapon", "Ammo", "GunParts", "Explosives", "Armor" } },
+    { "Survival", { "Medical", "Tools", "Materials", "Chemicals", "Electronics", "Light", "VehicleParts" } },
+    { "Outdoors", { "Gardening", "Fishing", "Trapping", "Camping", "Animals", "AnimalParts" } },
+    { "Goods", { "Clothing", "Accessory", "Bags", "Books", "SkillBooks", "Entertainment", "Household", "Furniture", "Misc" } },
 }
 
-local function onSetTag(playerNum, obj, str)
-    writeTag(obj, str)
-    local p = getSpecificPlayer(playerNum)
-    if p then
-        local pretty = tostring(str or ""):gsub(",", " + ")
-        HaloTextHelper.addTextWithArrow(p, "LOCKED to: " .. pretty, "[br/]", false, HaloTextHelper.getColorGreen())
-        p:Say("This one's locked to " .. pretty .. ".")
-    end
-end
 local function onClearTag(playerNum, obj)
     writeTag(obj, nil)
     local p = getSpecificPlayer(playerNum)
@@ -1253,20 +1311,45 @@ local function onClearTag(playerNum, obj)
 end
 
 local PRETTY = {
-    Perishable="Fresh food", DryFood="Dry food", Water="Water", Cooking="Cooking",
+    Perishable="Fresh food", DryFood="Dry food", Water="Water", Drinks="Soft drinks",
+    Alcohol="Alcohol", Cooking="Cooking", Compost="Compost bin",
     Gun="Guns", Weapon="Melee", Ammo="Ammo", GunParts="Gun parts", Explosives="Explosives",
+    Armor="Armour",
     Medical="Medical", Tools="Tools", VehicleParts="Car parts", Materials="Materials",
     Chemicals="Chemicals", Electronics="Electronics", Light="Lights", Gardening="Gardening",
-    Fishing="Fishing", Trapping="Trapping", Camping="Camping", Animals="Animals",
+    Fishing="Fishing", Trapping="Trapping", Camping="Camping", Animals="Animals", AnimalParts="Animal parts",
     Books="Books", SkillBooks="Skill books",
-    Entertainment="Entertainment", Clothing="Clothing", Bags="Bags", Furniture="Furniture",
-    Household="Household", Misc="Misc",
+    Entertainment="Entertainment", Clothing="Clothing", Accessory="Accessories", Bags="Bags",
+    Furniture="Furniture", Household="Household", Misc="Misc",
 }
 local function prettyTags(set)
     local names = {}
     for cat in pairs(set) do names[#names+1] = PRETTY[cat] or cat end
     table.sort(names)
     return table.concat(names, ", ")
+end
+
+-- MULTI-SELECT: toggle ONE category on/off for this container, keeping the rest. A box
+-- with several categories takes items for ALL of them.
+local function onToggleTag(playerNum, obj, cat)
+    local set = readTagSet(obj) or {}
+    if set[cat] then set[cat] = nil else set[cat] = true end
+    local parts = {}
+    for c in pairs(set) do parts[#parts+1] = c end
+    table.sort(parts)
+    writeTag(obj, table.concat(parts, ","))
+    local p = getSpecificPlayer(playerNum)
+    if not p then return end
+    if next(set) == nil then
+        HaloTextHelper.addTextWithArrow(p, "Lock cleared", "[br/]", false, HaloTextHelper.getColorWhite())
+        p:Say("Unlocked -- takes anything now.")
+    else
+        local added = set[cat] ~= nil
+        local col = added and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorRed()
+        local verb = added and "+ " or "- "
+        HaloTextHelper.addTextWithArrow(p, verb .. (PRETTY[cat] or cat) .. "   now: " .. prettyTags(set), "[br/]", false, col)
+        p:Say("This one holds: " .. prettyTags(set) .. ".")
+    end
 end
 
 local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, test)
@@ -1300,11 +1383,13 @@ local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, te
         local gopt = root:addOption(group[1], nil, nil)
         local gsub = ISContextMenu:getNew(root)
         root:addSubMenu(gopt, gsub)
-        for _, row in ipairs(group[2]) do
-            gsub:addOption(row[1], playerNum, onSetTag, ownerC, row[2])
+        for _, cat in ipairs(group[2]) do
+            local on = current and current[cat]
+            local mark = on and "[x] " or "[ ] "
+            gsub:addOption(mark .. (PRETTY[cat] or cat), playerNum, onToggleTag, ownerC, cat)
         end
     end
-    if current then root:addOption("-- Clear lock --", playerNum, onClearTag, ownerC) end
+    if current then root:addOption("-- Clear all --", playerNum, onClearTag, ownerC) end
 end
 Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
     local __t0 = getTimestampMs()
