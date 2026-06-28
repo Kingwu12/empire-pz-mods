@@ -13,7 +13,8 @@ local SAFE_SPRITES = { "safe", "vault", "strongbox" }  -- sprite-name substrings
 -- with "safe" in it). Must be exact -- the bank tilesheet also holds walls/floors/counters,
 -- so we can't match the prefix. Add more here as you identify them with the probe.
 local SAFE_SPRITES_EXACT = {
-    ["location_business_bank_01_68"] = true,   -- police/bank decorative safe (King's case)
+    ["location_business_bank_01_68"] = true,   -- police/bank decorative safe (variant A)
+    ["location_business_bank_01_69"] = true,   -- police/bank decorative safe (variant B, upstairs)
 }
 local SCRAP_GIVEN  = 3                                  -- ScrapMetal returned per safe (0 = none)
 local SAFE_DEBUG   = true                               -- true -> adds an "identify object" probe
