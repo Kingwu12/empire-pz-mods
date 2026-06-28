@@ -17,7 +17,7 @@
 -- ============================================================
 
 local RADIUS = 12
-local EMPIRE_SORT_DEBUG = false  -- prints a one-line breakdown to console on each F9
+local EMPIRE_SORT_DEBUG = true   -- TEMP: prints a full breakdown to console on each sort (revert when done)
 
 -- ---- item categorisation ----
 local DRY_FOOD = {
@@ -371,21 +371,41 @@ local function collectStorages(player)
                     local objs = s:getObjects()
                     for i = 0, objs:size() - 1 do
                         local obj = objs:get(i)
-                        local c = nil
-                        pcall(function() c = obj:getContainer() end)
-                        if c and not seen[c] then
-                            seen[c] = true
-                            -- HARD SKIP functional containers (ISA solar power box, etc.):
-                            -- never scanned, never evicted, never magneted out of -- so F9
-                            -- can never yank a working battery out of the power box.
-                            if not (EmpireSortConfig and EmpireSortConfig.isExcludedContainer
-                                    and EmpireSortConfig.isExcludedContainer(c)) then
-                                local holder = obj
-                                pcall(function() local pa = c:getParent(); if pa then holder = pa end end)
-                                out[#out+1] = {
-                                    c = c, obj = holder, ctype = containerType(c),
-                                    tag = readTagSet(c),
-                                }
+                        -- One object can carry MORE THAN ONE container -- e.g. an
+                        -- industrial fridge is a single object with a fridge compartment
+                        -- AND a freezer compartment. getContainer() returns only the first,
+                        -- so the other half was invisible to the sort. Enumerate them all
+                        -- via getContainerByIndex (the API the vanilla inventory UI uses),
+                        -- falling back to getContainer() for single-container objects.
+                        local conts = {}
+                        local ncont = 0
+                        pcall(function() ncont = obj:getContainerCount() or 0 end)
+                        if ncont and ncont > 0 then
+                            for ci = 0, ncont - 1 do
+                                local cc = nil
+                                pcall(function() cc = obj:getContainerByIndex(ci) end)
+                                if cc then conts[#conts+1] = cc end
+                            end
+                        else
+                            local cc = nil
+                            pcall(function() cc = obj:getContainer() end)
+                            if cc then conts[#conts+1] = cc end
+                        end
+                        for _, c in ipairs(conts) do
+                            if c and not seen[c] then
+                                seen[c] = true
+                                -- HARD SKIP functional containers (ISA solar power box, etc.):
+                                -- never scanned, never evicted, never magneted out of -- so F9
+                                -- can never yank a working battery out of the power box.
+                                if not (EmpireSortConfig and EmpireSortConfig.isExcludedContainer
+                                        and EmpireSortConfig.isExcludedContainer(c)) then
+                                    local holder = obj
+                                    pcall(function() local pa = c:getParent(); if pa then holder = pa end end)
+                                    out[#out+1] = {
+                                        c = c, obj = holder, ctype = containerType(c),
+                                        tag = readTagSet(c),
+                                    }
+                                end
                             end
                         end
                     end
@@ -911,7 +931,20 @@ local function smartSort(player)
     moved = moved + floorSorted
 
     local contN = 0
-    for c in pairs(touched) do contN = contN + 1; pcall(function() c:setDrawDirty(true) end) end
+    for c in pairs(touched) do
+        contN = contN + 1
+        pcall(function() c:setDrawDirty(true) end)
+        -- refresh the WORLD graphic the same way the game does on a manual transfer:
+        -- ItemPicker.updateOverlaySprite on the container's parent object. Without this a
+        -- shelf/fridge the sort just filled still renders EMPTY, so you can't tell which
+        -- containers actually hold anything. setDrawDirty alone does not swap the sprite.
+        pcall(function()
+            local par = c:getParent()
+            if par and ItemPicker and ItemPicker.updateOverlaySprite then
+                ItemPicker.updateOverlaySprite(par)
+            end
+        end)
+    end
 
     local LABELS = {
         Perishable="fridge", DryFood="dry food", Water="water", Cooking="cooking", Compost="compost",
@@ -1138,7 +1171,20 @@ local function consolidateTypes(player)
     end
 
     local contN = 0
-    for c in pairs(touched) do contN = contN + 1; pcall(function() c:setDrawDirty(true) end) end
+    for c in pairs(touched) do
+        contN = contN + 1
+        pcall(function() c:setDrawDirty(true) end)
+        -- refresh the WORLD graphic the same way the game does on a manual transfer:
+        -- ItemPicker.updateOverlaySprite on the container's parent object. Without this a
+        -- shelf/fridge the sort just filled still renders EMPTY, so you can't tell which
+        -- containers actually hold anything. setDrawDirty alone does not swap the sprite.
+        pcall(function()
+            local par = c:getParent()
+            if par and ItemPicker and ItemPicker.updateOverlaySprite then
+                ItemPicker.updateOverlaySprite(par)
+            end
+        end)
+    end
     local typeN = 0; for _ in pairs(typesDone) do typeN = typeN + 1 end
 
     if EMPIRE_SORT_DEBUG then
