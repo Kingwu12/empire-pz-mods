@@ -9,6 +9,12 @@
 -- the console -- then add that substring to SAFE_SPRITES below (and flip SAFE_DEBUG off).
 
 local SAFE_SPRITES = { "safe", "vault", "strongbox" }  -- sprite-name substrings (lowercased)
+-- EXACT sprite names for decorative "safes" that are just map tiles (no container, no name
+-- with "safe" in it). Must be exact -- the bank tilesheet also holds walls/floors/counters,
+-- so we can't match the prefix. Add more here as you identify them with the probe.
+local SAFE_SPRITES_EXACT = {
+    ["location_business_bank_01_68"] = true,   -- police/bank decorative safe (King's case)
+}
 local SCRAP_GIVEN  = 3                                  -- ScrapMetal returned per safe (0 = none)
 local SAFE_DEBUG   = true                               -- true -> adds an "identify object" probe
 
@@ -20,7 +26,9 @@ end
 
 local function isSafe(obj)
     if not obj then return false end
-    local n = spriteName(obj):lower()
+    local raw = spriteName(obj)
+    if SAFE_SPRITES_EXACT[raw] then return true end   -- exact decorative-safe tiles
+    local n = raw:lower()
     if n ~= "" then
         for _, w in ipairs(SAFE_SPRITES) do if n:find(w, 1, true) then return true end end
     end
