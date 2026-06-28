@@ -318,7 +318,13 @@ local function isProtected(it)
     if p then return true end
     -- holstered / on the hotbar (pistol in a holster, knife on the belt) is part of your
     -- active loadout, even though it isn't "equipped" in-hand -- never auto-sort it.
-    pcall(function() local s = it:getAttachedSlot(); p = (s ~= nil and s ~= "") end)
+    -- getAttachedSlot() is an INT index; -1 = not attached (matches vanilla ISHotbar:
+    -- it checks == -1 / ~= -1 and sets -1 on detach). The old "~= ''" string compare was
+    -- ALWAYS true for the int -1, so every inventory item read as protected and nothing
+    -- ever sorted off the player. Compare to -1, and also accept the string slot-type as
+    -- a belt-and-suspenders signal.
+    pcall(function() local s = it:getAttachedSlot(); p = (type(s) == "number" and s ~= -1) end)
+    if not p then pcall(function() local t = it:getAttachedSlotType(); p = (t ~= nil and t ~= "") end) end
     return p == true
 end
 
