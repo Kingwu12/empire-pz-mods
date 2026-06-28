@@ -47,14 +47,51 @@ function EmpireBases.getSSCBase()
     return nil
 end
 
--- The registered bases. Seeds "Main" from SSC the first time SSC bounds are valid.
+-- Read the KnoxSurvivors base marker (centre + radius) as a rectangle. KS is what
+-- this save actually runs (SuperbSurvivors is absent), so this is the real seed.
+function EmpireBases.getKSBase()
+    local out
+    pcall(function()
+        if not KS or not KS.GetPlayerBase then return end
+        local p = getSpecificPlayer(0); if not p then return end
+        local b = KS.GetPlayerBase(p)
+        if not b or b.x == nil then return end
+        local r = 24
+        pcall(function()
+            local sv = SandboxVars and SandboxVars.KnoxSurvivors
+            if sv then r = sv.MaxBaseRadius or sv.BaseMarkerRadius or r end
+        end)
+        out = { x1 = b.x - r, x2 = b.x + r, y1 = b.y - r, y2 = b.y + r, z = b.z or 0 }
+    end)
+    if out and EmpireBases.validBounds(out) then return out end
+    return nil
+end
+
+-- Re-sync "Main" to the current KS base (call after moving your KS base marker).
+function EmpireBases.syncMainFromKS()
+    local ks = EmpireBases.getKSBase()
+    if not ks then return false end
+    local t = store()
+    for _, b in ipairs(t.list) do
+        if b.name == "Main" then
+            b.x1, b.x2, b.y1, b.y2, b.z = ks.x1, ks.x2, ks.y1, ks.y2, ks.z
+            return true
+        end
+    end
+    table.insert(t.list, { name = "Main", x1 = ks.x1, x2 = ks.x2,
+                           y1 = ks.y1, y2 = ks.y2, z = ks.z })
+    return true
+end
+
+-- The registered bases. Seeds "Main" from SSC, else KnoxSurvivors, the first time
+-- valid bounds exist.
 function EmpireBases.list()
     local t = store()
     if #t.list == 0 then
-        local ssc = EmpireBases.getSSCBase()
-        if ssc then
-            table.insert(t.list, { name = "Main", x1 = ssc.x1, x2 = ssc.x2,
-                                   y1 = ssc.y1, y2 = ssc.y2, z = ssc.z })
+        local seed = EmpireBases.getSSCBase() or EmpireBases.getKSBase()
+        if seed then
+            table.insert(t.list, { name = "Main", x1 = seed.x1, x2 = seed.x2,
+                                   y1 = seed.y1, y2 = seed.y2, z = seed.z })
         end
     end
     return t.list
