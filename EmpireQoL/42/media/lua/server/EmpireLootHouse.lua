@@ -24,10 +24,13 @@ local REDNECK = { "BedroomDresserRedneck","BedroomSidetableRedneck","WardrobeRed
 local GENERIC = { "BedroomDresser","DresserGeneric","WardrobeGeneric","BedroomSidetable","LivingRoomShelf","LivingRoomSideTable" }
 local CLASSY  = { "BedroomDresserClassy","BedroomSidetableClassy","WardrobeClassy","LivingRoomShelfClassy","LivingRoomSideTableClassy" }
 
-local GUNS_REDNECK = { "Shotgun","DoubleBarrelShotgun","HuntingRifle","VarmintRifle","Revolver_Long","Pistol" }
-local GUNS_GENERIC = { "Pistol","Shotgun" }
-local GUNS_CLASSY  = { "Pistol2","Pistol3","Revolver_Short" }
-local AMMO_BOXES   = { "ShotgunShellsBox","Bullets9mmBox","Bullets38Box","Bullets357Box","3030Box","308Box" }
+-- RealFirearms equivalents. Vanilla gun/ammo names get deleted by RF on refresh, so we
+-- seed RF items instead, keeping the same tier feel (rural = shotguns/hunting/revolver,
+-- average = pistol/shotgun, wealthy = home-defense handgun).
+local GUNS_REDNECK = { "RF_Remington870","RF_SingleBarrelShotgun","RF_Mossberg590","RF_Remington700","RF_Mini14","RF_SKS","RF_ColtPython" }
+local GUNS_GENERIC = { "RF_M9","RF_BHP","RF_Remington870","RF_SingleBarrelShotgun" }
+local GUNS_CLASSY  = { "RF_M9","RF_P226","RF_Glock18","RF_M1911A1" }
+local AMMO_BOXES   = { "RF_12GaugeBox","RF_9x19Box","RF_357Box","RF_45Box","RF_3006Box","RF_762x39Box" }
 
 local applied = false
 
