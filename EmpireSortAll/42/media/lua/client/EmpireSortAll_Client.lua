@@ -240,6 +240,45 @@ local function affinityOf(ct)
     return nil
 end
 
+-- SMART-BY-DEFAULT via ROOM: PZ container TYPES are mostly generic (crate/shelf/
+-- locker), but the ROOM a container sits in encodes purpose. So an untagged box in
+-- a kitchen attracts food, a bedroom box attracts clothes, etc. This is a soft
+-- filing preference (loose items flow here) -- it does NOT evict, so it never rips
+-- out things you deliberately stored. Tag a container for strict food-only eviction.
+local ROOM_CATS = {
+    kitchen  = { Perishable = true, DryFood = true, Cooking = true },
+    pantry   = { DryFood = true, Perishable = true, Cooking = true },
+    bedroom  = { Clothing = true },
+    closet   = { Clothing = true },
+    wardrobe = { Clothing = true },
+    bathroom = { Medical = true, Household = true },
+    garage   = { Tools = true, VehicleParts = true, Materials = true },
+    shed     = { Tools = true, Gardening = true, Materials = true },
+    toolshed = { Tools = true, Materials = true },
+    medical  = { Medical = true },
+    clinic   = { Medical = true },
+    pharmacy = { Medical = true },
+    office   = { Books = true, Household = true },
+    library  = { Books = true, SkillBooks = true },
+}
+local function roomCatsOf(cont)
+    local name = nil
+    pcall(function()
+        local sq
+        local pa = cont:getParent(); if pa then sq = pa:getSquare() end
+        if not sq and cont.getSquare then sq = cont:getSquare() end
+        local room = sq and sq:getRoom()
+        if room and room.getName then name = room:getName() end
+    end)
+    if not name or name == "" then return nil end
+    name = name:lower()
+    if ROOM_CATS[name] then return ROOM_CATS[name] end
+    for key, cats in pairs(ROOM_CATS) do
+        if name:find(key, 1, true) then return cats end
+    end
+    return nil
+end
+
 -- ---- tags (persisted on the furniture object's ModData, survives save/load) ----
 local VALID = {
     Perishable=true, DryFood=true, Water=true, Cooking=true, Compost=true,
@@ -492,7 +531,13 @@ local function smartSort(player)
                 st.designated = false
                 local hc = {}
                 for cat in pairs(countByCat(st.c)) do hc[cat] = true end
-                st.homeCats = hc           -- respect existing arrangement
+                -- ROOM-SMART DEFAULT: a general box inherits its room's preferred
+                -- categories as a SOFT filing hint (kitchen->food, bedroom->clothes,
+                -- garage->tools...). We only ADD to homeCats so loose items flow here;
+                -- designated stays false, so nothing already stored is ever evicted.
+                st.roomCats = roomCatsOf(st.c)
+                if st.roomCats then for cat in pairs(st.roomCats) do hc[cat] = true end end
+                st.homeCats = hc           -- respect existing arrangement + room hint
             end
         end
     end
@@ -522,6 +567,16 @@ local function smartSort(player)
     for _, st in ipairs(stores) do        -- cold + affinity
         if st.designated and not st.tag then
             for cat in pairs(st.homeCats) do offer(cat, st.c) end
+        end
+    end
+    -- room-smart: a general box sitting in a kitchen/bedroom/garage/etc is a PREFERRED
+    -- filing home for that room's categories -- offered ahead of "general holding the
+    -- most" so loose food flows to the kitchen box, clothes to the bedroom box, etc.
+    -- Still non-evicting (these stores stay designated=false); this only sets where
+    -- HOMELESS/loose items prefer to land.
+    for _, st in ipairs(stores) do
+        if not st.designated and st.roomCats then
+            for cat in pairs(st.roomCats) do offer(cat, st.c) end
         end
     end
     -- general containers: give each category to the general container already holding
@@ -602,26 +657,32 @@ local function smartSort(player)
         end
     end
 
-    -- (1a) EMPIRE PATCH: rebalance OVER-CAPACITY unlabelled boxes. Generals are normally
-    -- left as-is, but if one is stuffed past its weight limit, shed just enough items
-    -- (room-checked, grouped by type) into other boxes/empties to get it back under cap.
+    -- (1a) EMPIRE PATCH: rebalance OVER-CAPACITY boxes (general AND designated/tagged).
+    -- If a box is stuffed past its weight limit, shed just enough items to get it back
+    -- under cap, through the capacity-checked apply path (room-checked per destination).
+    --   * general / affinity / cold boxes -> shed via the normal spill path.
+    --   * TAGGED boxes -> shed as MAGNET moves so overflow only goes to ANOTHER tagged
+    --     home of the same category; if none has room it stays put. This stops overflow
+    --     landing in a general box that the (1b) magnet pass would just yank back (thrash).
     for _, st in ipairs(stores) do
-        if not st.designated then
-            local mx, cur = 0, 0
-            pcall(function() mx = st.c:getMaxWeight() end)
-            pcall(function() cur = st.c:getCapacityWeight() end)
-            if mx and mx > 0 and cur and cur > mx then
-                local items = st.c:getItems()
-                local snap = {}
-                for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
-                local proj = cur
-                for _, it in ipairs(snap) do
-                    if proj <= mx then break end
-                    if not isProtected(it) then
-                        local iw = 0; pcall(function() iw = it:getWeight() end)
+        local mx, cur = 0, 0
+        pcall(function() mx = st.c:getMaxWeight() end)
+        pcall(function() cur = st.c:getCapacityWeight() end)
+        if mx and mx > 0 and cur and cur > mx then
+            local items = st.c:getItems()
+            local snap = {}
+            for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
+            local proj = cur
+            for _, it in ipairs(snap) do
+                if proj <= mx then break end
+                if not isProtected(it) then
+                    local iw = 0; pcall(function() iw = it:getWeight() end)
+                    if st.tag then
+                        moves[#moves+1] = { item = it, from = st.c, magnet = true }
+                    else
                         moves[#moves+1] = { item = it, from = st.c }
-                        proj = proj - (iw or 0)
                     end
+                    proj = proj - (iw or 0)
                 end
             end
         end
