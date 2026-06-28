@@ -635,9 +635,46 @@ local function countByCat(cont)
     return counts
 end
 
-local function smartSort(player)
+-- gather the storage containers of the player's vehicle, or the nearest vehicle within
+-- maxDist tiles (trunk/truck bed, seats, glovebox). Parts without storage return nil and
+-- are skipped. Returns (containers[], vehicleOrNil). Verified vs vanilla: getCell():getVehicles,
+-- getPartCount/getPartByIndex, VehiclePart:getItemContainer.
+local function collectVehicleContainers(player, maxDist)
+    local veh = nil
+    pcall(function() veh = player:getVehicle() end)
+    if not veh then
+        local px, py = player:getX(), player:getY()
+        local best, bestD = nil, (maxDist or 6)
+        local list = nil
+        pcall(function() list = getCell():getVehicles() end)
+        if list then
+            for i = 0, list:size() - 1 do
+                local v = list:get(i)
+                local d = nil
+                pcall(function() local dx, dy = v:getX() - px, v:getY() - py; d = math.sqrt(dx * dx + dy * dy) end)
+                if d and d <= bestD then best, bestD = v, d end
+            end
+        end
+        veh = best
+    end
+    local conts = {}
+    if not veh then return conts, nil end
+    pcall(function()
+        local n = veh:getPartCount() or 0
+        for i = 0, n - 1 do
+            local part = veh:getPartByIndex(i)
+            local c = nil
+            if part then pcall(function() c = part:getItemContainer() end) end
+            if c then conts[#conts + 1] = c end
+        end
+    end)
+    return conts, veh
+end
+
+local function smartSort(player, opts)
     if not player then player = getSpecificPlayer(0) end
     if not player then return end
+    opts = opts or {}
 
     _catCache = {}   -- fresh category cache for this sort run (perf: classify each item once)
     local stores = collectStorages(player)
@@ -929,6 +966,20 @@ local function smartSort(player)
         end
     end
     pcall(function() addCarried(player:getInventory(), 0) end)
+
+    -- VEHICLE UNLOAD (Numpad5 / opts.includeVehicle): also pull loot from the nearest
+    -- vehicle's storage (trunk/bed/seats/glovebox) into base homes. addCarried recurses
+    -- into bags inside the trunk too, so a backpack of loot in the boot empties out as
+    -- well. Same protection rules apply downstream (favourites/holstered/loadout ammo skipped).
+    if opts.includeVehicle then
+        local vconts, veh = collectVehicleContainers(player, 6)
+        if veh then
+            HaloTextHelper.addTextWithArrow(player, "UNLOADING VEHICLE -> base", "[br/]", false, HaloTextHelper.getColorGreen())
+            for _, vc in ipairs(vconts) do pcall(function() addCarried(vc, 0) end) end
+        else
+            HaloTextHelper.addTextWithArrow(player, "No vehicle nearby to unload", "[br/]", false, HaloTextHelper.getColorWhite())
+        end
+    end
 
     -- LOADOUT PROTECTION: keep ammo + magazines that match any gun you're actively
     -- carrying (in-hand or holstered), so a sort never strips your gun's ammo. The mag
@@ -1592,6 +1643,9 @@ local function onKeyPressed(key)
         pcall(consolidateTypes, player) -- 2) then stack identical items into ONE pile
     elseif key == Keyboard.KEY_NUMPAD4 then
         pcall(consolidateTypes, player)
+    elseif key == Keyboard.KEY_NUMPAD5 then
+        pcall(function() smartSort(player, { includeVehicle = true }) end) -- unload nearest vehicle, then file
+        pcall(consolidateTypes, player)
     else
         return
     end
@@ -1600,4 +1654,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v10 loaded: + per-type CONSOLIDATE pass (END key / right-click -> Consolidate Duplicates) merges identical items into one pile. F9 = sort, END = consolidate; right-click storage -> Empire Storage to lock.")
+print("[EmpireSortAll] Smart Sort v11 loaded. Numpad3 = sort base + consolidate; Numpad4 = consolidate; Numpad5 = unload nearest vehicle into base + sort. Right-click storage -> Empire Storage to lock.")
