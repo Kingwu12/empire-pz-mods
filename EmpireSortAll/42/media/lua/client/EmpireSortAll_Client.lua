@@ -126,6 +126,23 @@ local function hayHas(hay, words)
     return false
 end
 
+-- ===== FREEZER vs FRIDGE (how a real survivor sorts cold storage) =====
+-- Raw protein / fish / ice cream goes to the FREEZER (frozen = zero spoilage, long-term).
+-- Cooked meals, dairy, produce, drinks stay in the FRIDGE (short-term, eat soon).
+local FREEZE_FOODTYPES = { Meat=true, Beef=true, Poultry=true, Fish=true, Seafood=true, Sausage=true, Venison=true, Pork=true }
+local FROZEN_WORDS = { "ice cream", "icecream", "popsicle", "gelato", "frozen" }
+local function isFreezerFood(item, hay)
+    if hayHas(hay, FROZEN_WORDS) then return true end
+    local ft = nil
+    pcall(function() ft = item:getFoodType() end)
+    if ft and FREEZE_FOODTYPES[tostring(ft)] then
+        local cooked = false
+        pcall(function() cooked = item:isCooked() end)
+        if not cooked then return true end   -- raw protein -> freeze it; cooked -> fridge
+    end
+    return false
+end
+
 -- ===== animal-part labels: vanilla fragments these into one bucket PER SPECIES =====
 local ANIMAL_WORDS = { "raccoon","fox","badger","beaver","bunny","rabbit","hedgehog",
     "mole","squirrel","deer","possum","skunk","carcass","pelt","antler","hoof","talon" }
@@ -251,7 +268,9 @@ local function categoryOfRaw(item)
             if DRY_FOOD[t] then result = "DryFood"; return end
             local off = 0
             pcall(function() off = item:getOffAgeMax() or 0 end)
-            if off > 200000 then result = "DryFood" else result = "Perishable" end
+            if off > 200000 then result = "DryFood"; return end
+            -- fresh: raw protein / fish / ice cream -> FREEZER (long-term); else fridge.
+            if isFreezerFood(item, hay) then result = "Frozen" else result = "Perishable" end
             return
         end
 
@@ -376,7 +395,7 @@ end
 
 -- ---- tags (persisted on the furniture object's ModData, survives save/load) ----
 local VALID = {
-    Perishable=true, DryFood=true, Water=true, Drinks=true, Alcohol=true, Cooking=true, Compost=true,
+    Perishable=true, Frozen=true, DryFood=true, Water=true, Drinks=true, Alcohol=true, Cooking=true, Compost=true,
     Gun=true, Weapon=true, Ammo=true, GunParts=true, Explosives=true, Armor=true,
     Medical=true, Tools=true, VehicleParts=true, Materials=true, Chemicals=true, Electronics=true,
     Light=true, Gardening=true, Fishing=true, Trapping=true, Camping=true, Animals=true, AnimalParts=true,
@@ -635,7 +654,10 @@ local function smartSort(player)
     for _, st in ipairs(stores) do
         if st.tag then
             st.designated, st.homeCats = true, st.tag
-        elseif isFreezer(st.ctype) or isFridge(st.ctype) then
+        elseif isFreezer(st.ctype) then
+            st.designated, st.homeCats = true, { Frozen = true }
+            st.cold = true; st.freezer = true
+        elseif isFridge(st.ctype) then
             st.designated, st.homeCats = true, { Perishable = true }
             st.cold = true
         else
@@ -684,6 +706,15 @@ local function smartSort(player)
             for cat in pairs(st.homeCats) do offer(cat, st.c) end
         end
     end
+    -- cold cross-fallback: a freezer is the primary Frozen home and a fridge the primary
+    -- Perishable home (offered above via homeCats). But if you only own ONE of them, it
+    -- takes the other's overflow too -- a freezer accepts fridge food, a fridge accepts
+    -- frozen food -- ranked AFTER the proper appliance so it's only a fallback.
+    for _, st in ipairs(stores) do
+        if st.designated and not st.tag and st.cold then
+            if st.freezer then offer("Perishable", st.c) else offer("Frozen", st.c) end
+        end
+    end
     -- room-smart: a general box sitting in a kitchen/bedroom/garage/etc is a PREFERRED
     -- filing home for that room's categories -- offered ahead of "general holding the
     -- most" so loose food flows to the kitchen box, clothes to the bedroom box, etc.
@@ -710,7 +741,7 @@ local function smartSort(player)
     -- round-robin any general container to categories still without a destination
     if #generals > 0 then
         local CATS = {
-            "Perishable","DryFood","Water","Drinks","Alcohol","Cooking","Gun","Weapon","Ammo","GunParts",
+            "Perishable","Frozen","DryFood","Water","Drinks","Alcohol","Cooking","Gun","Weapon","Ammo","GunParts",
             "Explosives","Armor","Medical","Tools","VehicleParts","Materials","Chemicals","Electronics",
             "Light","Gardening","Fishing","Trapping","Camping","Animals","AnimalParts","Books","SkillBooks",
             "Entertainment","Clothing","Accessory","Bags","Furniture","Household","Misc",
@@ -1115,7 +1146,7 @@ local function smartSort(player)
     end
 
     local LABELS = {
-        Perishable="fridge", DryFood="dry food", Water="water", Drinks="drinks", Alcohol="alcohol",
+        Perishable="fridge", Frozen="freezer", DryFood="dry food", Water="water", Drinks="drinks", Alcohol="alcohol",
         Cooking="cooking", Compost="compost",
         Gun="guns", Weapon="melee", Ammo="ammo", GunParts="gun parts",
         Explosives="explosives", Armor="armour", Medical="meds", Tools="tools", VehicleParts="car parts",
@@ -1384,7 +1415,7 @@ end
 -- Each leaf is a single category key. The menu TOGGLES it on/off for the container, so
 -- one box can hold several categories at once (multi-select).
 local TAG_GROUPS = {
-    { "Food & drink", { "Perishable", "DryFood", "Cooking", "Water", "Drinks", "Alcohol", "Compost" } },
+    { "Food & drink", { "Perishable", "Frozen", "DryFood", "Cooking", "Water", "Drinks", "Alcohol", "Compost" } },
     { "Weapons", { "Gun", "Weapon", "Ammo", "GunParts", "Explosives", "Armor" } },
     { "Survival", { "Medical", "Tools", "Materials", "Chemicals", "Electronics", "Light", "VehicleParts" } },
     { "Outdoors", { "Gardening", "Fishing", "Trapping", "Camping", "Animals", "AnimalParts" } },
@@ -1398,7 +1429,7 @@ local function onClearTag(playerNum, obj)
 end
 
 local PRETTY = {
-    Perishable="Fresh food", DryFood="Dry food", Water="Water", Drinks="Soft drinks",
+    Perishable="Fresh food", Frozen="Freezer", DryFood="Dry food", Water="Water", Drinks="Soft drinks",
     Alcohol="Alcohol", Cooking="Cooking", Compost="Compost bin",
     Gun="Guns", Weapon="Melee", Ammo="Ammo", GunParts="Gun parts", Explosives="Explosives",
     Armor="Armour",
