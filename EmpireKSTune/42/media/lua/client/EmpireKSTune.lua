@@ -10,16 +10,16 @@ local M = EmpireKSTune
 -- Edit these freely. Each line is "KS sandbox option = our value".
 -- Comment a line out to leave KS's saved value untouched.
 M.overrides = {
-    -- stop survivors vanishing while you move around a large base
-    DormantActorDistance     = 200,   -- KS default 110
-    -- make survivors actually useful in a fight. KS per-hit damage is fractional,
-    -- so this needs to be high to feel competent. Try 1.0 (timid) .. 2.5 (strong).
+    -- COMBAT tuning only -- cheap, adds NO extra rendered bodies. Safe to keep.
     SurvivorDamageMultiplier = 1.60,  -- KS default 0.75
-    -- they hold the line a little longer before fleeing
     RetreatHealthPercent     = 25,    -- KS default 35
-    -- treat more of your base as "home" (better base behaviour + cleanup margin)
-    BaseMarkerRadius         = 15,    -- KS default 9
-    MaxBaseRadius            = 32,    -- KS default 24
+
+    -- BODY-COUNT knobs REVERTED to KS defaults. Raising these keeps more
+    -- survivors fully rendered/animated near you = engine render cost, which is
+    -- the FPS bottleneck. Left off until FPS is fixed.
+    -- DormantActorDistance  = 200,   -- KS default 110  (reverted)
+    -- BaseMarkerRadius      = 15,    -- KS default 9    (reverted)
+    -- MaxBaseRadius         = 32,    -- KS default 24   (reverted)
 }
 
 function M.apply()
