@@ -121,21 +121,36 @@ local function onFill(playerNum, context, worldobjects, test)
     if test then return end
     local player = getSpecificPlayer(playerNum)
     if not player then return end
-    -- de-dupe objects under the cursor; collect any safes
-    local safes, all, seen = {}, {}, {}
+    -- worldobjects only contains the FRONT/clicked object(s) -- a window in front of a safe
+    -- hides the safe from this list. So gather the squares the cursor touched, then scan each
+    -- square's FULL object stack. That finds safes stacked behind windows/walls/decor.
+    local squares, seenSq = {}, {}
     for _, obj in ipairs(worldobjects) do
-        if obj and not seen[obj] then
-            seen[obj] = true
-            all[#all + 1] = obj
-            if isSafe(obj) then safes[#safes + 1] = obj end
+        if obj then
+            local sq = nil; pcall(function() sq = obj:getSquare() end)
+            if sq and not seenSq[sq] then seenSq[sq] = true; squares[#squares + 1] = sq end
         end
+    end
+    local safes, all, seen = {}, {}, {}
+    for _, sq in ipairs(squares) do
+        pcall(function()
+            local objs = sq:getObjects()
+            for i = 0, objs:size() - 1 do
+                local o = objs:get(i)
+                if o and not seen[o] then
+                    seen[o] = true
+                    all[#all + 1] = o
+                    if isSafe(o) then safes[#safes + 1] = o end
+                end
+            end
+        end)
     end
     if #safes > 0 then
         -- one option; removeSafe clears every safe-matching object on that square
         context:addOption("Empire: Remove safe", player, removeSafe, safes[1])
     end
-    -- discovery probe: available whenever debugging, so you can inspect a tile even when the
-    -- Remove option already shows (e.g. it appears but removal silently fails on a baked tile).
+    -- discovery probe: dumps the FULL square stack (every object, even hidden ones) so a
+    -- safe behind a window is visible in the log. Available whenever debugging.
     if SAFE_DEBUG and #all > 0 then
         context:addOption("Empire: identify object (log)", player, identify, all)
     end
