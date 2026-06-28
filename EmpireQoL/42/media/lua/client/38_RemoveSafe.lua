@@ -17,7 +17,7 @@ local SAFE_SPRITES_EXACT = {
     ["location_business_bank_01_69"] = true,   -- police/bank decorative safe (variant B, upstairs)
 }
 local SCRAP_GIVEN  = 3                                  -- ScrapMetal returned per safe (0 = none)
-local SAFE_DEBUG   = true                               -- true -> adds an "identify object" probe
+local SAFE_DEBUG   = false                              -- true -> adds an "identify object" probe
 
 local function spriteName(obj)
     local n = ""
