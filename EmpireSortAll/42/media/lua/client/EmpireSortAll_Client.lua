@@ -635,30 +635,11 @@ local function countByCat(cont)
     return counts
 end
 
--- gather the storage containers of the player's vehicle, or the nearest vehicle within
--- maxDist tiles (trunk/truck bed, seats, glovebox). Parts without storage return nil and
--- are skipped. Returns (containers[], vehicleOrNil). Verified vs vanilla: getCell():getVehicles,
--- getPartCount/getPartByIndex, VehiclePart:getItemContainer.
-local function collectVehicleContainers(player, maxDist)
-    local veh = nil
-    pcall(function() veh = player:getVehicle() end)
-    if not veh then
-        local px, py = player:getX(), player:getY()
-        local best, bestD = nil, (maxDist or 6)
-        local list = nil
-        pcall(function() list = getCell():getVehicles() end)
-        if list then
-            for i = 0, list:size() - 1 do
-                local v = list:get(i)
-                local d = nil
-                pcall(function() local dx, dy = v:getX() - px, v:getY() - py; d = math.sqrt(dx * dx + dy * dy) end)
-                if d and d <= bestD then best, bestD = v, d end
-            end
-        end
-        veh = best
-    end
+-- storage ItemContainers of a SPECIFIC vehicle (trunk/bed/seats/glovebox). Parts without
+-- storage are skipped. Verified vs vanilla: getPartCount/getPartByIndex, VehiclePart:getItemContainer.
+local function vehicleStorageContainers(veh)
     local conts = {}
-    if not veh then return conts, nil end
+    if not veh then return conts end
     pcall(function()
         local n = veh:getPartCount() or 0
         for i = 0, n - 1 do
@@ -668,7 +649,7 @@ local function collectVehicleContainers(player, maxDist)
             if c then conts[#conts + 1] = c end
         end
     end)
-    return conts, veh
+    return conts
 end
 
 local function smartSort(player, opts)
@@ -967,17 +948,14 @@ local function smartSort(player, opts)
     end
     pcall(function() addCarried(player:getInventory(), 0) end)
 
-    -- VEHICLE UNLOAD (Numpad5 / opts.includeVehicle): also pull loot from the nearest
-    -- vehicle's storage (trunk/bed/seats/glovebox) into base homes. addCarried recurses
-    -- into bags inside the trunk too, so a backpack of loot in the boot empties out as
-    -- well. Same protection rules apply downstream (favourites/holstered/loadout ammo skipped).
-    if opts.includeVehicle then
-        local vconts, veh = collectVehicleContainers(player, 6)
-        if veh then
+    -- VEHICLE UNLOAD (right-click vehicle -> "Transfer loot to base"): pull loot from the
+    -- SPECIFIC vehicle you clicked (opts.vehicle) into base homes. addCarried recurses into
+    -- bags in the trunk too. Same protections (favourites/holstered/loadout ammo skipped).
+    if opts.vehicle then
+        local vconts = vehicleStorageContainers(opts.vehicle)
+        if #vconts > 0 then
             HaloTextHelper.addTextWithArrow(player, "UNLOADING VEHICLE -> base", "[br/]", false, HaloTextHelper.getColorGreen())
             for _, vc in ipairs(vconts) do pcall(function() addCarried(vc, 0) end) end
-        else
-            HaloTextHelper.addTextWithArrow(player, "No vehicle nearby to unload", "[br/]", false, HaloTextHelper.getColorWhite())
         end
     end
 
@@ -1556,8 +1534,36 @@ local function onToggleTag(playerNum, obj, cat)
     end)
 end
 
+-- right-click your vehicle while base storage is in range -> one-click transfer its loot
+-- into the base, sorted. Only the vehicle you're at is touched -- never a global sweep.
+local function onTransferVehicleToBase(player, veh)
+    if not player or not veh then return end
+    pcall(function() smartSort(player, { vehicle = veh }) end)
+    pcall(function() consolidateTypes(player) end)
+    if EmpireBaseCache and EmpireBaseCache.invalidate then EmpireBaseCache.invalidate() end
+end
+
 local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, test)
     if test then return end
+
+    -- VEHICLE: offer "Transfer loot to base" only when you're AT a vehicle AND base storage
+    -- is in range. getVehicleToInteractWith = the vehicle you're in or the useable one beside
+    -- you (the same one PZ would interact with) -- so it targets exactly that one vehicle.
+    do
+        local player = getSpecificPlayer(playerNum)
+        if player and ISVehicleMenu and ISVehicleMenu.getVehicleToInteractWith then
+            local veh = nil
+            pcall(function() veh = ISVehicleMenu.getVehicleToInteractWith(player) end)
+            if veh and #vehicleStorageContainers(veh) > 0 then
+                local hasBase = false
+                pcall(function() hasBase = (#collectStorages(player) > 0) end)
+                if hasBase then
+                    context:addOption("Empire: Transfer loot to base", player, onTransferVehicleToBase, veh)
+                end
+            end
+        end
+    end
+
     local owner, ownerC = nil, nil
     for _, o in ipairs(worldobjects) do
         local c = nil
@@ -1643,9 +1649,6 @@ local function onKeyPressed(key)
         pcall(consolidateTypes, player) -- 2) then stack identical items into ONE pile
     elseif key == Keyboard.KEY_NUMPAD4 then
         pcall(consolidateTypes, player)
-    elseif key == Keyboard.KEY_NUMPAD5 then
-        pcall(function() smartSort(player, { includeVehicle = true }) end) -- unload nearest vehicle, then file
-        pcall(consolidateTypes, player)
     else
         return
     end
@@ -1654,4 +1657,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v11 loaded. Numpad3 = sort base + consolidate; Numpad4 = consolidate; Numpad5 = unload nearest vehicle into base + sort. Right-click storage -> Empire Storage to lock.")
+print("[EmpireSortAll] Smart Sort v11 loaded. Numpad3 = sort base + consolidate; Numpad4 = consolidate. Right-click a vehicle near base -> 'Transfer loot to base'. Right-click storage -> Empire Storage to lock.")
