@@ -296,7 +296,11 @@ local function isProtected(it)
     pcall(function() p = it:isFavorite() end)
     if p then return true end
     pcall(function() p = it:isEquipped() end)
-    return p
+    if p then return true end
+    -- holstered / on the hotbar (pistol in a holster, knife on the belt) is part of your
+    -- active loadout, even though it isn't "equipped" in-hand -- never auto-sort it.
+    pcall(function() local s = it:getAttachedSlot(); p = (s ~= nil and s ~= "") end)
+    return p == true
 end
 
 -- ---- container helpers ----
@@ -874,12 +878,46 @@ local function smartSort(player)
             local it = items:get(i)
             local sub = nil
             if instanceof(it, "InventoryContainer") then
-                pcall(function() sub = it:getInventory() end)
+                -- a bag you've marked "keep" (loadout bag) is skipped whole -- its
+                -- contents never get sorted out. Flag lives on the bag's ModData.
+                local keep = false
+                pcall(function() local md = it:getModData(); keep = md and md.empireKeepBag == true end)
+                if not keep then pcall(function() sub = it:getInventory() end) end
             end
             if sub and sub ~= cont then addCarried(sub, depth + 1) end
         end
     end
     pcall(function() addCarried(player:getInventory(), 0) end)
+
+    -- LOADOUT PROTECTION: keep ammo + magazines that match any gun you're actively
+    -- carrying (in-hand or holstered), so a sort never strips your gun's ammo. The mag
+    -- already inside the gun moves with the protected gun; this covers SPARE mags and
+    -- LOOSE rounds. No favouriting required.
+    local neededAmmo, neededMags = {}, {}
+    do
+        local function addGun(w)
+            if not w or not instanceof(w, "HandWeapon") then return end
+            local ranged = false; pcall(function() ranged = w:isRanged() end)
+            if not ranged then return end
+            local at, mt = nil, nil
+            pcall(function() at = w:getAmmoType() end)
+            pcall(function() mt = w:getMagazineType() end)
+            if at and at ~= "" then neededAmmo[at] = true; neededAmmo[at:gsub("^.*%.", "")] = true end
+            if mt and mt ~= "" then neededMags[mt] = true; neededMags[mt:gsub("^.*%.", "")] = true end
+        end
+        pcall(function() addGun(player:getPrimaryHandItem()) end)
+        pcall(function() addGun(player:getSecondaryHandItem()) end)
+        pcall(function()
+            local hb = getPlayerHotbar(0)
+            if hb and hb.attachedItems then for _, hit in pairs(hb.attachedItems) do addGun(hit) end end
+        end)
+    end
+    local function isLoadoutItem(it)
+        local ft, tp = "", ""
+        pcall(function() ft = it:getFullType() or "" end)
+        pcall(function() tp = it:getType() or "" end)
+        return (neededAmmo[ft] or neededAmmo[tp] or neededMags[ft] or neededMags[tp]) == true
+    end
 
     for _, cont in ipairs(carried) do
         local items = nil
@@ -889,7 +927,7 @@ local function smartSort(player)
             for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
             for _, it in ipairs(snap) do
                 local isBag = instanceof(it, "InventoryContainer")
-                if not isProtected(it) and not isBag then
+                if not isProtected(it) and not isBag and not isLoadoutItem(it) then
                     local cat = categoryOf(it)
                     local dest = homeFor(cat)
                     if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest } end
@@ -1450,12 +1488,32 @@ Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobject
 end)
 
 -- ---- right-click inventory option ----
+local function onToggleKeepBag(playerObj, bagItem)
+    local md = bagItem:getModData()
+    md.empireKeepBag = not (md.empireKeepBag == true)
+    pcall(function()
+        local on = md.empireKeepBag == true
+        local msg = on and "Keep bag ON -- contents won't be sorted" or "Keep bag OFF -- contents will sort again"
+        local col = on and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorRed()
+        HaloTextHelper.addTextWithArrow(playerObj, msg, "[br/]", false, col)
+    end)
+end
+
 local function onFillInventoryObjectContextMenu(player, context, items)
     local playerObj = player
     if type(player) == "number" then playerObj = getSpecificPlayer(player) end
     if not playerObj then return end
     context:addOption("Smart Sort Base", playerObj, smartSort)
     context:addOption("Consolidate Duplicates", playerObj, consolidateTypes)
+    -- if a bag is right-clicked, offer a one-click "keep this bag" toggle (loadout bag)
+    local it = items and items[1]
+    if it and type(it) == "table" and it.items then it = it.items[1] end
+    if it and instanceof(it, "InventoryContainer") then
+        local kept = false
+        pcall(function() local md = it:getModData(); kept = md and md.empireKeepBag == true end)
+        local label = kept and "Empire: Stop keeping this bag" or "Empire: Keep this bag (don't sort its contents)"
+        context:addOption(label, playerObj, onToggleKeepBag, it)
+    end
 end
 Events.OnFillInventoryObjectContextMenu.Add(onFillInventoryObjectContextMenu)
 
