@@ -12,8 +12,9 @@ local M = EmpireKSTune
 M.overrides = {
     -- stop survivors vanishing while you move around a large base
     DormantActorDistance     = 200,   -- KS default 110
-    -- make survivors actually useful in a fight (still below player damage)
-    SurvivorDamageMultiplier = 1.10,  -- KS default 0.75
+    -- make survivors actually useful in a fight. KS per-hit damage is fractional,
+    -- so this needs to be high to feel competent. Try 1.0 (timid) .. 2.5 (strong).
+    SurvivorDamageMultiplier = 1.60,  -- KS default 0.75
     -- they hold the line a little longer before fleeing
     RetreatHealthPercent     = 25,    -- KS default 35
     -- treat more of your base as "home" (better base behaviour + cleanup margin)

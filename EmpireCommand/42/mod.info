@@ -1,0 +1,5 @@
+name=Empire Command
+id=EmpireCommand
+description=A readable command window for Knox Survivors: two clear lines plus a health bar per survivor (vs KS's overlapping text), with Follow/Base/Rest/Call/Unstick/Combat-Policy buttons. Reads KS's global data API and hijacks the roster key (U) to open this window. Does not modify KS files. Requires Knox Survivors.
+poster=
+url=
