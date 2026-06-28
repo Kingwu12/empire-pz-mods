@@ -39,12 +39,19 @@ local function isSafe(obj)
     return false
 end
 
-local function removeSafe(player, obj)
-    if not player or not obj then return end
-    local sq = nil; pcall(function() sq = obj:getSquare() end)
-    if not sq then return end
-    -- dump any (inaccessible) container contents onto the floor so nothing is silently lost.
-    -- Fully guarded: if the drop call mismatches, we just skip dumping and still remove.
+-- is `obj` still listed on the square's object stack? (used to verify a removal worked)
+local function stillOnSquare(sq, obj)
+    local found = false
+    pcall(function()
+        local objs = sq:getObjects()
+        for i = 0, objs:size() - 1 do if objs:get(i) == obj then found = true; break end end
+    end)
+    return found
+end
+
+local function removeOne(player, sq, obj)
+    -- dump any container contents first so nothing is silently lost (these safes are
+    -- container=nil, but guard anyway). Fully pcall'd.
     pcall(function()
         local c = obj:getContainer()
         if c then
@@ -55,23 +62,58 @@ local function removeSafe(player, obj)
             end
         end
     end)
-    -- a heavy metal box is worth some scrap
-    if SCRAP_GIVEN > 0 then
-        pcall(function()
-            for _ = 1, SCRAP_GIVEN do player:getInventory():AddItem("Base.ScrapMetal") end
-        end)
+    local sprite = spriteName(obj)
+    pcall(function() sq:transmitRemoveItemFromSquare(obj) end)          -- 1) standard persisting removal
+    if stillOnSquare(sq, obj) then pcall(function() sq:RemoveTileObject(obj) end) end  -- 2) local stack removal
+    if stillOnSquare(sq, obj) then                                       -- 3) last-ditch
+        pcall(function() sq:transmitRemoveItemFromSquare(obj) end)
+        pcall(function() obj:removeFromWorld() end)
+        pcall(function() obj:removeFromSquare() end)
     end
-    -- remove the object from the world (standard square removal path)
-    pcall(function() sq:transmitRemoveItemFromSquare(obj) end)
-    pcall(function() HaloTextHelper.addTextWithArrow(player, "Safe removed", "[br/]", false, HaloTextHelper.getColorGreen()) end)
+    local gone = not stillOnSquare(sq, obj)
+    print("[EmpireQoL][safe-rm] sprite='" .. sprite .. "' removed=" .. tostring(gone))
+    return gone
+end
+
+local function removeSafe(player, obj)
+    if not player or not obj then return end
+    local sq = nil; pcall(function() sq = obj:getSquare() end)
+    if not sq then
+        pcall(function() HaloTextHelper.addTextWithArrow(player, "No square under that object", "[br/]", false, HaloTextHelper.getColorRed()) end)
+        return
+    end
+    -- remove EVERY safe-matching object on the square (covers 2-tile / stacked safes)
+    local targets = { obj }
+    pcall(function()
+        local objs = sq:getObjects()
+        for i = 0, objs:size() - 1 do
+            local o = objs:get(i)
+            if o ~= obj and isSafe(o) then targets[#targets + 1] = o end
+        end
+    end)
+    local removed = 0
+    for _, o in ipairs(targets) do if removeOne(player, sq, o) then removed = removed + 1 end end
+    if removed > 0 and SCRAP_GIVEN > 0 then
+        pcall(function() for _ = 1, SCRAP_GIVEN do player:getInventory():AddItem("Base.ScrapMetal") end end)
+    end
+    pcall(function()
+        local ok  = removed > 0
+        local col = ok and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorRed()
+        local msg = ok and ("Safe removed (" .. removed .. ")") or "Couldn't remove - see console [safe-rm]"
+        HaloTextHelper.addTextWithArrow(player, msg, "[br/]", false, col)
+    end)
 end
 
 local function identify(player, list)
-    for _, obj in ipairs(list) do
+    print("[EmpireQoL][safe-id] ---- tile dump: " .. #list .. " object(s) ----")
+    for i, obj in ipairs(list) do
         local ct = nil; pcall(function() local c = obj:getContainer(); if c then ct = c:getType() end end)
-        print("[EmpireQoL][safe-id] sprite='" .. spriteName(obj) .. "' container=" .. tostring(ct))
+        local pos = "?"
+        pcall(function() local s = obj:getSquare(); if s then pos = s:getX()..","..s:getY()..","..s:getZ() end end)
+        print("[EmpireQoL][safe-id]   ["..i.."] sprite='" .. spriteName(obj) .. "' container=" .. tostring(ct)
+            .. " isSafe=" .. tostring(isSafe(obj)) .. " sq=" .. pos)
     end
-    pcall(function() HaloTextHelper.addTextWithArrow(player, "Object sprites logged to console", "[br/]", false, HaloTextHelper.getColorWhite()) end)
+    pcall(function() HaloTextHelper.addTextWithArrow(player, #list .. " object(s) logged to console", "[br/]", false, HaloTextHelper.getColorWhite()) end)
 end
 
 local function onFill(playerNum, context, worldobjects, test)
@@ -87,12 +129,13 @@ local function onFill(playerNum, context, worldobjects, test)
             if isSafe(obj) then safes[#safes + 1] = obj end
         end
     end
-    for _, obj in ipairs(safes) do
-        context:addOption("Empire: Remove safe", player, removeSafe, obj)
+    if #safes > 0 then
+        -- one option; removeSafe clears every safe-matching object on that square
+        context:addOption("Empire: Remove safe", player, removeSafe, safes[1])
     end
-    -- discovery probe: only while debugging, and only when nothing was auto-detected on this
-    -- tile (so once detection works for your safes, this never clutters the menu again).
-    if SAFE_DEBUG and #safes == 0 and #all > 0 then
+    -- discovery probe: available whenever debugging, so you can inspect a tile even when the
+    -- Remove option already shows (e.g. it appears but removal silently fails on a baked tile).
+    if SAFE_DEBUG and #all > 0 then
         context:addOption("Empire: identify object (log)", player, identify, all)
     end
 end
