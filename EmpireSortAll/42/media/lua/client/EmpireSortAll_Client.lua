@@ -849,7 +849,7 @@ local function smartSort(player, opts)
     -- free weight (headroom) of a container -- drives load-sharing + the overfill guard.
     local function freeOf(c)
         local mx, cur = 0, 0
-        pcall(function() mx = c:getMaxWeight() end)
+        pcall(function() mx = c:getCapacity() end)
         pcall(function() cur = c:getCapacityWeight() end)
         return (mx or 0) - (cur or 0)
     end
@@ -934,7 +934,7 @@ local function smartSort(player, opts)
     --     landing in a general box that the (1b) magnet pass would just yank back (thrash).
     for _, st in ipairs(stores) do
         local mx, cur = 0, 0
-        pcall(function() mx = st.c:getMaxWeight() end)
+        pcall(function() mx = st.c:getCapacity() end)
         pcall(function() cur = st.c:getCapacityWeight() end)
         if mx and mx > 0 and cur and cur > mx then
             local items = st.c:getItems()
@@ -944,7 +944,7 @@ local function smartSort(player, opts)
             for _, it in ipairs(snap) do
                 if proj <= mx then break end
                 if not isProtected(it) then
-                    local iw = 0; pcall(function() iw = it:getWeight() end)
+                    local iw = 0; pcall(function() iw = it:getActualWeight() end)
                     if st.tag then
                         moves[#moves+1] = { item = it, from = st.c, magnet = true }
                     else
@@ -1060,6 +1060,12 @@ local function smartSort(player, opts)
         return (neededAmmo[ft] or neededAmmo[tp] or neededMags[ft] or neededMags[tp]) == true
     end
 
+    -- SCOPE TRACKING: which categories the player is actually depositing this run. When you're
+    -- carrying something, base-internal reorganizing (eviction/magnet/rotten) is limited to
+    -- these categories -- dumping logs never rummages your fridges. Empty-handed = full tidy.
+    local activeCats, anyCarried = {}, false
+    local noHomeCat = {}   -- cat -> count of carried items with NO home container at all
+    if opts.vehicle then anyCarried = true end
     for _, cont in ipairs(carried) do
         local items = nil
         pcall(function() items = cont:getItems() end)
@@ -1080,13 +1086,16 @@ local function smartSort(player, opts)
                         pcall(function() local md = it:getModData(); keep = md and md.empireKeepBag == true end)
                         if empty and not keep then
                             local cat = categoryOf(it)
+                            activeCats[cat] = true; anyCarried = true
                             local dest = homeFor(cat)
-                            if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest } end
+                            if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest, carried = true } end
                         end
                     else
                         local cat = categoryOf(it)
+                        activeCats[cat] = true; anyCarried = true
                         local dest = homeFor(cat)
-                        if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest } end
+                        if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest, carried = true }
+                        elseif not dest then noHomeCat[cat] = (noHomeCat[cat] or 0) + 1 end
                     end
                 end
             end
@@ -1113,9 +1122,9 @@ local function smartSort(player, opts)
                     -- which is how a box ends up at 60/50. Enforce the cap ourselves.
                     if ok then
                         local mx, cur, iw = 0, 0, 0
-                        pcall(function() mx = dest:getMaxWeight() end)
+                        pcall(function() mx = dest:getCapacity() end)
                         pcall(function() cur = dest:getCapacityWeight() end)
-                        pcall(function() iw = item:getWeight() end)
+                        pcall(function() iw = item:getActualWeight() end)
                         if mx and mx > 0 and (cur + (iw or 0)) > mx + 0.001 then ok = false end
                     end
                     fits = ok
@@ -1133,7 +1142,12 @@ local function smartSort(player, opts)
         pcall(function() stillThere = mv.from:contains(mv.item) end)
         if stillThere then
             local cat = categoryOf(mv.item)
-            if mv.magnet then
+            -- SCOPE: when carrying loot, only reorganize categories you're depositing. Carried
+            -- moves always run; base-internal moves (eviction/magnet) for other categories are
+            -- skipped so dumping logs never reshuffles your food/ammo. Empty-handed = full tidy.
+            if (not mv.carried) and anyCarried and not activeCats[cat] then
+                -- leave this stored item exactly where it is
+            elseif mv.magnet then
                 -- tag-pull: ONLY into a tagged container for this category. All full -> stay put.
                 if placeInto(mv.item, mv.from, byPolicy(cat, taggedDests[cat])) then
                     moved = moved + 1; byCat[cat] = (byCat[cat] or 0) + 1
@@ -1168,8 +1182,11 @@ local function smartSort(player, opts)
     for _, st in ipairs(stores) do
         if st.tag and st.tag.Compost then compostBins[#compostBins+1] = st end
     end
+    -- SCOPE: only purge rotten food on a full tidy (empty-handed) or when you're actually
+    -- depositing food. Dumping logs shouldn't make the sorter rummage every fridge for rot.
+    local doRotten = (not anyCarried) or activeCats.Perishable or activeCats.Frozen or activeCats.DryFood
     for _, st in ipairs(stores) do
-        if not (st.tag and st.tag.Compost) then   -- never pull rotten OUT of a compost bin
+        if doRotten and not (st.tag and st.tag.Compost) then   -- never pull rotten OUT of a compost bin
             local its = st.c:getItems()
             local snap = {}
             for i = 0, its:size() - 1 do snap[#snap+1] = its:get(i) end
@@ -1223,6 +1240,9 @@ local function smartSort(player, opts)
            and not instanceof(it, "InventoryContainer")
            and not (EmpireSortConfig and EmpireSortConfig.isNeverMove and EmpireSortConfig.isNeverMove(it)) then
             local cat = categoryOf(it)
+            -- SCOPE: when carrying loot, only floor-sort the categories you're depositing,
+            -- so dumping logs never re-shelves food lying on the floor. Empty-handed = full tidy.
+            if not (anyCarried and not activeCats[cat]) then
             homeFor(cat)
             local cands = spillCands(cat)
             local placed = false
@@ -1251,6 +1271,7 @@ local function smartSort(player, opts)
                 end
             end
             if not placed then floorLeft = floorLeft + 1 end
+            end  -- close carry-scope gate
         end
     end
     moved = moved + floorSorted
@@ -1299,7 +1320,7 @@ local function smartSort(player, opts)
             local n = 0; pcall(function() n = st.c:getItems():size() end)
             local w, mx = -1, -1
             pcall(function() w = st.c:getCapacityWeight() end)
-            pcall(function() mx = st.c:getMaxWeight() end)
+            pcall(function() mx = st.c:getCapacity() end)
             print(string.format("[EmpireSort DIAG]   ctype=%s tag=%s items=%d weight=%.1f/%.1f", tostring(st.ctype), tg, n, w, mx))
             -- For a LOCKED/designated container, list items that DON'T belong (foreign), with
             -- their game label + how we classified them. This is how we see WHY (e.g.) an
@@ -1334,7 +1355,19 @@ local function smartSort(player, opts)
         HaloTextHelper.addTextWithArrow(player, "Dumped " .. rottenDumped .. " ROTTEN food to floor", "[br/]", false, HaloTextHelper.getColorRed())
     end
     if floorLeft > 0 then
-        HaloTextHelper.addTextWithArrow(player, floorLeft .. " floor items have no shelf yet", "[br/]", false, HaloTextHelper.getColorWhite())
+        HaloTextHelper.addTextWithArrow(player, floorLeft .. " floor items have no shelf yet", "[br/]", false, HaloTextHelper.getColorGreen())
+    end
+
+    -- NO-HOME: carried items whose category has no container at all (not tagged, no general
+    -- box). This is the usual reason "my logs won't go in" -- there's simply nowhere set for
+    -- them. Name the exact category that needs a box instead of failing silently.
+    local noHomeN, noHomeList = 0, {}
+    for cat, n in pairs(noHomeCat) do noHomeN = noHomeN + n; noHomeList[#noHomeList+1] = (LABELS[cat] or cat) end
+    if noHomeN > 0 then
+        table.sort(noHomeList)
+        local cats = table.concat(noHomeList, ", ")
+        HaloTextHelper.addTextWithArrow(player, noHomeN .. " items have NO home -- tag a box for: " .. cats, "[br/]", false, HaloTextHelper.getColorRed())
+        player:Say("Nowhere set for " .. cats .. ". Tag a container for it and sort again.")
     end
 
     if moved > 0 then
@@ -1356,7 +1389,7 @@ local function smartSort(player, opts)
     elseif rottenDumped > 0 then
         player:Say("Cleared " .. rottenDumped .. " rotten item(s) out to the floor.")
     else
-        HaloTextHelper.addTextWithArrow(player, "Nothing to move - already sorted", "[br/]", false, HaloTextHelper.getColorWhite())
+        HaloTextHelper.addTextWithArrow(player, "Nothing to move - already sorted", "[br/]", false, HaloTextHelper.getColorGreen())
         player:Say("Storage's already in order.")
     end
 end
@@ -1537,7 +1570,7 @@ local function consolidateTypes(player)
         HaloTextHelper.addTextWithArrow(player, "Home piles FULL - " .. noRoom .. " items couldn't merge", "[br/]", false, HaloTextHelper.getColorRed())
         player:Say("No room to merge -- the target shelves are full.")
     else
-        HaloTextHelper.addTextWithArrow(player, "Already consolidated - nothing to merge", "[br/]", false, HaloTextHelper.getColorWhite())
+        HaloTextHelper.addTextWithArrow(player, "Already consolidated - nothing to merge", "[br/]", false, HaloTextHelper.getColorGreen())
         player:Say("Every item type's already in one place.")
     end
 end
