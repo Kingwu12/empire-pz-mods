@@ -78,7 +78,7 @@ local CAT_MAP = {
     Animal="Animals", AnimalMisc="Animals", AnimalEnc="Animals",
     -- ===== BOOKS / READING (HC LitR recipe mags, LitE books) =====
     Literature="Books", Cartography="Books", LitR="Books", LitE="Books", LitW="Books",
-    SkillBook="SkillBooks",
+    SkillBook="Books",
     -- ===== ENTERTAINMENT (toys, instruments, sports, fitness) =====
     Entertainment="Entertainment", Sports="Entertainment", Toy="Entertainment",
     Instrument="Entertainment", Fitness="Entertainment",
@@ -155,8 +155,11 @@ local function patternBucket(disp)
     if not disp or disp == "" then return nil end
     local d = disp:lower()
     if d:find("firearm", 1, true) then return "Gun" end
+    -- NOTE: "magazine" is deliberately NOT here -- gun magazines are already caught by the
+    -- exact map (Magazine="Ammo") and structurally (getMaxAmmo>0). Keyword-matching "magazine"
+    -- only ever mis-grabs READING magazines (skill/recipe mags) and dumps them in Ammo.
     if d:find("ammo", 1, true) or d:find("bullet", 1, true) or d:find("casing", 1, true)
-        or d:find("magazine", 1, true) or d:find("shell", 1, true) then return "Ammo" end
+        or d:find("shell", 1, true) then return "Ammo" end
     if d:find("bulletproof", 1, true) or d:find("protection", 1, true)
         or d:find("armor", 1, true) or d:find("armour", 1, true)
         or d:find("plate carrier", 1, true) or d:find("kevlar", 1, true) then return "Armor" end
@@ -164,8 +167,10 @@ local function patternBucket(disp)
     if d:find("first aid", 1, true) or d:find("firstaid", 1, true) or d:find("medic", 1, true) then return "Medical" end
     if d:find("tuning", 1, true) then return "VehicleParts" end
     if d:find("device", 1, true) then return "Electronics" end
-    if d:find("journal", 1, true) or d:find("skillbook", 1, true) then return "SkillBooks" end
-    if d:find("recipe", 1, true) or d:find("scrap", 1, true) then return "Materials" end
+    -- all reading material folds into one "Books" home (skill books, journals, recipe mags).
+    if d:find("journal", 1, true) or d:find("skillbook", 1, true) then return "Books" end
+    if d:find("recipe", 1, true) then return "Books" end
+    if d:find("scrap", 1, true) then return "Materials" end
     for _, w in ipairs(ANIMAL_WORDS) do if d:find(w, 1, true) then return "AnimalParts" end end
     return nil
 end

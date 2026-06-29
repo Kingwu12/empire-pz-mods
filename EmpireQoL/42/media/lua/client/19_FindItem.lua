@@ -86,7 +86,10 @@ local function nearbyContainers(player)
     local cell = getCell()
     local px, py = sq:getX(), sq:getY()
     local seen = {}
-    for z = 0, 7 do
+    -- scan basements too (negative z). This used to start at 0, so a crate sitting in a
+    -- container down in the police-station basement was never scanned -> "nothing found"
+    -- even when it was right next to you.
+    for z = -8, 8 do
         for x = px - RADIUS, px + RADIUS do
             for y = py - RADIUS, py + RADIUS do
                 local s = cell:getGridSquare(x, y, z)
