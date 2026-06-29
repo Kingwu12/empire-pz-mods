@@ -1589,9 +1589,11 @@ local TAG_GROUPS = {
 }
 
 local function onClearTag(playerNum, obj)
-    writeTag(obj, nil)
-    local p = getSpecificPlayer(playerNum)
-    if p then pcall(function() HaloTextHelper.addTextWithArrow(p, "Lock cleared", "[br/]", false, HaloTextHelper.getColorRed()) end) end
+    pcall(function()
+        writeTag(obj, nil)
+        local p = getSpecificPlayer(playerNum)
+        if p then pcall(function() HaloTextHelper.addBadText(p, "Lock cleared -- takes anything") end) end
+    end)
 end
 
 local PRETTY = {
@@ -1616,25 +1618,24 @@ end
 -- MULTI-SELECT: toggle ONE category on/off for this container, keeping the rest. A box
 -- with several categories takes items for ALL of them.
 local function onToggleTag(playerNum, obj, cat)
-    local set = readTagSet(obj) or {}
-    if set[cat] then set[cat] = nil else set[cat] = true end
-    local parts = {}
-    for c in pairs(set) do parts[#parts+1] = c end
-    table.sort(parts)
-    writeTag(obj, table.concat(parts, ","))
-    local p = getSpecificPlayer(playerNum)
-    if not p then return end
+    -- whole body guarded: a tagging action must NEVER throw to the context menu (that pops
+    -- an error overlay + spams console). Persist the tag FIRST, then best-effort feedback.
     pcall(function()
-        if next(set) == nil then
-            HaloTextHelper.addTextWithArrow(p, "Lock cleared", "[br/]", false, HaloTextHelper.getColorRed())
-            p:Say("Unlocked -- takes anything now.")
-        else
-            local added = set[cat] ~= nil
-            local col = added and HaloTextHelper.getColorGreen() or HaloTextHelper.getColorRed()
-            local verb = added and "+ " or "- "
-            HaloTextHelper.addTextWithArrow(p, verb .. (PRETTY[cat] or cat) .. "   now: " .. prettyTags(set), "[br/]", false, col)
-            p:Say("This one holds: " .. prettyTags(set) .. ".")
-        end
+        local set = readTagSet(obj) or {}
+        if set[cat] then set[cat] = nil else set[cat] = true end
+        local parts = {}
+        for c in pairs(set) do parts[#parts+1] = c end
+        table.sort(parts)
+        writeTag(obj, table.concat(parts, ","))           -- PERSIST -- the part that matters
+        local p = getSpecificPlayer(playerNum)
+        if not p then return end
+        local added = set[cat] ~= nil
+        local msg
+        if next(set) == nil then msg = "Lock cleared -- takes anything now"
+        else msg = (added and "+ " or "- ") .. (PRETTY[cat] or cat) .. "  ->  " .. prettyTags(set) end
+        -- addGoodText/addBadText are the simple 2-arg halos (no nil-prone color lookups)
+        pcall(function() if added then HaloTextHelper.addGoodText(p, msg) else HaloTextHelper.addBadText(p, msg) end end)
+        pcall(function() p:Say(next(set) == nil and "Unlocked -- takes anything now." or ("Holds: " .. prettyTags(set) .. ".")) end)
     end)
 end
 

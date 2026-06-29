@@ -1,0 +1,30 @@
+module Base
+{
+	/*
+	 * Empire OS -- orphaned-item stubs.
+	 *
+	 * A previously-installed gun mod baked the item IDs Base.BHP and Base.Mauser98K into the
+	 * save (loot, containers, the world dictionary). After that mod was removed nothing
+	 * defines these types any more, so the engine logs "Couldn't find item Base.BHP /
+	 * Base.Mauser98K" every time it tries to resolve one -- thousands of lines per minute,
+	 * which stutters the game and drowns the console.
+	 *
+	 * Declaring minimal Normal items makes InventoryItemFactory.CreateItem succeed, so the
+	 * spam stops. They are harmless clutter you can delete in-game; nothing spawns them.
+	 */
+	item BHP
+	{
+		Type			=	Normal,
+		DisplayCategory	=	Junk,
+		Weight			=	1.0,
+		DisplayName		=	Defunct Item (BHP),
+	}
+
+	item Mauser98K
+	{
+		Type			=	Normal,
+		DisplayCategory	=	Junk,
+		Weight			=	2.0,
+		DisplayName		=	Defunct Item (Mauser98K),
+	}
+}
