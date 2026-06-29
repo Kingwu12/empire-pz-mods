@@ -175,10 +175,31 @@ local function patternBucket(disp)
     return nil
 end
 
+-- War Thunder Vehicle Library ammo: tank/aircraft rounds (module "Base", no shared prefix,
+-- so we match an explicit allowlist + a few unmistakable tokens small arms never use). These
+-- go to their own "AmmoVehicle" home so they don't clog the normal RF/vanilla ammo box.
+local WT_VEHICLE_AMMO = {
+    apammo=true, apfsdsammo=true, heammo=true, heatammo=true,
+    ["30mmap"]=true, ["30mmhe"]=true, ["792box"]=true, ["792bullets"]=true,
+    antitankmissile10=true, machinegun10=true, rocket10=true, rocketnest10=true,
+}
+local function isVehicleAmmo(item)
+    local t = ""
+    pcall(function() t = (item:getType() or ""):lower() end)
+    if t == "" then return false end
+    if WT_VEHICLE_AMMO[t] then return true end
+    -- tight patterns only (no loose "heat" -> would catch wheat/heater); future-proofs the
+    -- mod's per-vehicle generated rounds without ever grabbing small-arms ammo.
+    return t:find("apfsds", 1, true) ~= nil or t:find("heatammo", 1, true) ~= nil
+        or t:find("antitankmissile", 1, true) ~= nil or t:find("rocketnest", 1, true) ~= nil
+end
+
 local function categoryOfRaw(item)
     local result = "Misc"
     pcall(function()
         if not item then return end
+        -- War Thunder vehicle ammo -> its own home, before any other rule.
+        if isVehicleAmmo(item) then result = "AmmoVehicle"; return end
         -- firearms first: a ranged hand weapon is a Gun no matter what label it carries
         if instanceof(item, "HandWeapon") then
             local ranged = false
@@ -435,7 +456,7 @@ end
 -- ---- tags (persisted on the furniture object's ModData, survives save/load) ----
 local VALID = {
     Perishable=true, Frozen=true, DryFood=true, Water=true, Drinks=true, Alcohol=true, Cooking=true, Compost=true,
-    Gun=true, Weapon=true, Ammo=true, GunParts=true, Explosives=true, Armor=true,
+    Gun=true, Weapon=true, Ammo=true, AmmoVehicle=true, GunParts=true, Explosives=true, Armor=true,
     Medical=true, Tools=true, VehicleParts=true, Materials=true, Chemicals=true, Electronics=true,
     Light=true, Gardening=true, Fishing=true, Trapping=true, Camping=true, Animals=true, AnimalParts=true,
     Books=true, SkillBooks=true, Entertainment=true,
@@ -798,7 +819,7 @@ local function smartSort(player, opts)
     -- round-robin any general container to categories still without a destination
     if #generals > 0 then
         local CATS = {
-            "Perishable","Frozen","DryFood","Water","Drinks","Alcohol","Cooking","Gun","Weapon","Ammo","GunParts",
+            "Perishable","Frozen","DryFood","Water","Drinks","Alcohol","Cooking","Gun","Weapon","Ammo","AmmoVehicle","GunParts",
             "Explosives","Armor","Medical","Tools","VehicleParts","Materials","Chemicals","Electronics",
             "Light","Gardening","Fishing","Trapping","Camping","Animals","AnimalParts","Books","SkillBooks",
             "Entertainment","Clothing","Accessory","Bags","Furniture","Household","Misc",
@@ -840,6 +861,23 @@ local function smartSort(player, opts)
         table.sort(out, function(a, b) return freeOf(a) > freeOf(b) end)
         return out
     end
+    -- FILL-ONE-FIRST: the fullest box that still has room goes first; full boxes sink to the
+    -- bottom. So loose rounds pack ONE box to the brim before a fresh one is opened, instead
+    -- of scattering across many half-empty boxes.
+    local function byFillFirst(list)
+        local out = {}
+        if list then for _, c in ipairs(list) do out[#out+1] = c end end
+        local function k(c) local f = freeOf(c); if f <= 0 then return math.huge end return f end
+        table.sort(out, function(a, b) return k(a) < k(b) end)
+        return out
+    end
+    -- categories that should consolidate (fill-one-first) rather than spread. Ammo only,
+    -- by request -- food still spreads across fridges so one doesn't cram while others sit empty.
+    local CONSOLIDATE_FIRST = { Ammo = true, AmmoVehicle = true }
+    local function byPolicy(cat, list)
+        if CONSOLIDATE_FIRST[cat] then return byFillFirst(list) end
+        return byFreeDesc(list)
+    end
     local isDesig = {}
     for _, st in ipairs(stores) do if st.designated then isDesig[st.c] = true end end
 
@@ -856,9 +894,9 @@ local function smartSort(player, opts)
         local function push(list)
             for _, c in ipairs(list) do if not seen[c] then seen[c] = true; out[#out + 1] = c end end
         end
-        push(byFreeDesc(desig))      -- designated homes (fridges/tagged/affinity), emptiest first
-        push(byFreeDesc(gen))        -- general boxes already holding this category
-        push(byFreeDesc(generals))   -- any general box at all
+        push(byPolicy(cat, desig))     -- designated homes (fridges/tagged/affinity)
+        push(byPolicy(cat, gen))       -- general boxes already holding this category
+        push(byPolicy(cat, generals))  -- any general box at all
         return out
     end
 
@@ -1097,7 +1135,7 @@ local function smartSort(player, opts)
             local cat = categoryOf(mv.item)
             if mv.magnet then
                 -- tag-pull: ONLY into a tagged container for this category. All full -> stay put.
-                if placeInto(mv.item, mv.from, byFreeDesc(taggedDests[cat])) then
+                if placeInto(mv.item, mv.from, byPolicy(cat, taggedDests[cat])) then
                     moved = moved + 1; byCat[cat] = (byCat[cat] or 0) + 1
                 else
                     blocked = blocked + 1   -- tagged home(s) full; left exactly where it was
@@ -1236,7 +1274,7 @@ local function smartSort(player, opts)
     local LABELS = {
         Perishable="fridge", Frozen="freezer", DryFood="dry food", Water="water", Drinks="drinks", Alcohol="alcohol",
         Cooking="cooking", Compost="compost",
-        Gun="guns", Weapon="melee", Ammo="ammo", GunParts="gun parts",
+        Gun="guns", Weapon="melee", Ammo="ammo", AmmoVehicle="vehicle ammo", GunParts="gun parts",
         Explosives="explosives", Armor="armour", Medical="meds", Tools="tools", VehicleParts="car parts",
         Materials="materials", Chemicals="chemicals", Electronics="electronics", Light="lights",
         Gardening="gardening", Fishing="fishing", Trapping="trapping", Camping="camping",
@@ -1511,7 +1549,7 @@ end
 -- one box can hold several categories at once (multi-select).
 local TAG_GROUPS = {
     { "Food & drink", { "Perishable", "Frozen", "DryFood", "Cooking", "Water", "Drinks", "Alcohol", "Compost" } },
-    { "Weapons", { "Gun", "Weapon", "Ammo", "GunParts", "Explosives", "Armor" } },
+    { "Weapons", { "Gun", "Weapon", "Ammo", "AmmoVehicle", "GunParts", "Explosives", "Armor" } },
     { "Survival", { "Medical", "Tools", "Materials", "Chemicals", "Electronics", "Light", "VehicleParts" } },
     { "Outdoors", { "Gardening", "Fishing", "Trapping", "Camping", "Animals", "AnimalParts" } },
     { "Goods", { "Clothing", "Accessory", "Bags", "Books", "SkillBooks", "Entertainment", "Household", "Furniture", "Misc" } },
@@ -1526,7 +1564,7 @@ end
 local PRETTY = {
     Perishable="Fresh food", Frozen="Freezer", DryFood="Dry food", Water="Water", Drinks="Soft drinks",
     Alcohol="Alcohol", Cooking="Cooking", Compost="Compost bin",
-    Gun="Guns", Weapon="Melee", Ammo="Ammo", GunParts="Gun parts", Explosives="Explosives",
+    Gun="Guns", Weapon="Melee", Ammo="Ammo", AmmoVehicle="Vehicle ammo", GunParts="Gun parts", Explosives="Explosives",
     Armor="Armour",
     Medical="Medical", Tools="Tools", VehicleParts="Car parts", Materials="Materials",
     Chemicals="Chemicals", Electronics="Electronics", Light="Lights", Gardening="Gardening",
