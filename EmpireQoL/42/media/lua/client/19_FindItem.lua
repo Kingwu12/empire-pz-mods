@@ -119,9 +119,18 @@ local function itemMatches(it, q)
     local hit = false
     pcall(function()
         local n = (it:getName() or ""):lower()
-        if n:find(q, 1, true) then hit = true; return end
         local t = (it:getType() or ""):lower()
-        if t:find(q, 1, true) then hit = true end
+        -- fast path: whole phrase appears in name or type
+        if n:find(q, 1, true) or t:find(q, 1, true) then hit = true; return end
+        -- multi-word fallback: every word in the query must appear (any order) across
+        -- name+type combined, so "double bed" matches "Bed (Double, Black Frame)" etc.
+        local hay = n .. " " .. t
+        local any = false
+        for w in q:gmatch("%S+") do
+            any = true
+            if not hay:find(w, 1, true) then return end   -- a word missing -> no match
+        end
+        if any then hit = true end
     end)
     return hit
 end
