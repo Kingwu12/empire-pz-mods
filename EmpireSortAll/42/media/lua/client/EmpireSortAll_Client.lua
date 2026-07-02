@@ -684,7 +684,14 @@ local function collectStorages(player, boundsOverride)
                             if it and instanceof(it, "InventoryContainer") then
                                 local t = ""
                                 pcall(function() t = (it:getType() or ""):lower() end)
-                                if t:find("ammo", 1, true) then
+                                -- recognized placed container -> which category it homes.
+                                -- Unrecognized types stay excluded: a random placed box
+                                -- should never silently start receiving loot.
+                                local pcat = nil
+                                if t:find("granade", 1, true) or t:find("grenade", 1, true) or t:find("explos", 1, true) then pcat = "Explosives"
+                                elseif t:find("ammo", 1, true) then pcat = "Ammo"
+                                else pcat = affinityOf(t) end
+                                if pcat then
                                     local keep, nm = false, false
                                     pcall(function() local md = it:getModData(); keep = md and md.empireKeepBag == true end)
                                     pcall(function() nm = EmpireSortConfig and EmpireSortConfig.isNeverMove and EmpireSortConfig.isNeverMove(it) end)
@@ -695,8 +702,8 @@ local function collectStorages(player, boundsOverride)
                                     if ic and not seen[ic] and not keep and not nm and capMx > 0 then
                                         seen[ic] = true
                                         out[#out+1] = {
-                                            c = ic, obj = nil, ctype = "placedammo:" .. t,
-                                            tag = nil, placedAmmo = true,
+                                            c = ic, obj = nil, ctype = "placed:" .. t,
+                                            tag = nil, placedAmmo = true, placedCat = pcat,
                                         }
                                     end
                                 end
@@ -905,15 +912,11 @@ local function smartSort(player, opts)
             st.designated, st.homeCats = true, { Perishable = true }
             st.cold = true
         elseif st.placedAmmo then
-            -- placed can on a bench: dedicated home, keyed off the can's own type.
-            -- Grenade boxes home Explosives, everything else homes Ammo. Contents are
-            -- King-curated: these never evict and consolidate never touches them.
-            local pct = st.ctype or ""
-            if pct:find("granade", 1, true) or pct:find("grenade", 1, true) or pct:find("explos", 1, true) then
-                st.designated, st.homeCats = true, { Explosives = true }
-            else
-                st.designated, st.homeCats = true, { Ammo = true }
-            end
+            -- placed container: dedicated home for its category, resolved at scan time
+            -- (grenade->Explosives, ammo->Ammo, else type affinity: first-aid->Medical,
+            -- toolbox->Tools...). Contents are King-curated: never evicted, consolidate
+            -- hands off, and they LEAD their tier's queue (see placedFirst).
+            st.designated, st.homeCats = true, { [st.placedCat or "Ammo"] = true }
         else
             local aff = affinityOf(st.ctype)
             if aff then
@@ -1049,11 +1052,26 @@ local function smartSort(player, opts)
     -- categories that should consolidate (fill-one-first) rather than spread. Ammo only,
     -- by request -- food still spreads across fridges so one doesn't cram while others sit empty.
     local CONSOLIDATE_FIRST = { Ammo = true, AmmoVehicle = true }
+    -- Placed containers LEAD their tier: under fill-one-first an EMPTY ammo can loses
+    -- to a half-full cabinet forever -- the cans starved despite being valid homes.
+    -- Ladder: PRIMARY marks > placed containers > everything else in the tier.
+    local isPlacedCan = {}
+    for _, st in ipairs(stores) do if st.placedAmmo then isPlacedCan[st.c] = true end end
+    local function placedFirst(list)
+        if not list or #list < 2 then return list end
+        local pc, rest = {}, {}
+        for _, c in ipairs(list) do
+            if isPlacedCan[c] then pc[#pc+1] = c else rest[#rest+1] = c end
+        end
+        if #pc == 0 then return list end
+        for _, c in ipairs(rest) do pc[#pc+1] = c end
+        return pc
+    end
     local function byPolicy(cat, list)
         -- PRIMARY containers always outrank the rest of their tier (armoury before
         -- basement crate); within each half the normal spread/fill policy applies.
-        if CONSOLIDATE_FIRST[cat] then return primaryFirst(byFillFirst(list)) end
-        return primaryFirst(byFreeDesc(list))
+        if CONSOLIDATE_FIRST[cat] then return primaryFirst(placedFirst(byFillFirst(list))) end
+        return primaryFirst(placedFirst(byFreeDesc(list)))
     end
     local isDesig = {}
     for _, st in ipairs(stores) do if st.designated then isDesig[st.c] = true end end
@@ -1739,14 +1757,9 @@ local function consolidateTypes(player)
         elseif isFridge(st.ctype) then
             st.designated, st.homeCats, st.cold = true, { Perishable = true }, true
         elseif st.placedAmmo then
-            -- placed cans: same designation split as Smart Sort. eligible() and the
-            -- tally both hard-skip them, so this only keeps them out of the general pool.
-            local pct = st.ctype or ""
-            if pct:find("granade", 1, true) or pct:find("grenade", 1, true) or pct:find("explos", 1, true) then
-                st.designated, st.homeCats = true, { Explosives = true }
-            else
-                st.designated, st.homeCats = true, { Ammo = true }
-            end
+            -- placed containers: same category as Smart Sort. eligible() and the tally
+            -- both hard-skip them, so this only keeps them out of the general pool.
+            st.designated, st.homeCats = true, { [st.placedCat or "Ammo"] = true }
         else
             local aff = affinityOf(st.ctype)
             if aff then st.designated, st.homeCats = true, { [aff] = true }
@@ -2130,4 +2143,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v19.4 loaded. Placed cans PROTECTED: never evicted, never drained by consolidate; grenade boxes home Explosives. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
+print("[EmpireSortAll] Smart Sort v19.5 loaded. Placed containers FILL FIRST in their tier (below PRIMARY marks); medical/tool/other recognized placed containers now included. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
