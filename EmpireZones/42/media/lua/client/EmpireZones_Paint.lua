@@ -53,6 +53,51 @@ local function ensureBaseZone()
     return EZ.get(EZ.newZone("Base", "base"))
 end
 
+-- AUTO-DETECT: flood fill outward from the clicked tile across THIS floor. Walls and
+-- fences stop the fill (isBlockedTo); doors and windows are passed so interior rooms
+-- join the yard. A perimeter gate standing OPEN leaks the fill into the world -- the
+-- tile cap catches that and we retry in STRICT mode (doors block too) and say so.
+-- Trees can block isBlockedTo and leave holes behind them: patch holes with the
+-- existing Add-tile / Add-5x5 smoothing tools afterwards.
+local MAX_FILL = 6000
+local function floodDetect(startSq, passDoors)
+    local cell = getCell()
+    local z = startSq:getZ()
+    local visited = {}
+    local order = {}
+    local queue = { { startSq:getX(), startSq:getY() } }
+    visited[EZ.key(startSq:getX(), startSq:getY(), z)] = true
+    while #queue > 0 do
+        local cur = table.remove(queue)
+        order[#order + 1] = cur
+        if #order > MAX_FILL then return nil, #order end
+        local csq = cell:getGridSquare(cur[1], cur[2], z)
+        if csq then
+            for _, d in ipairs({ {1,0}, {-1,0}, {0,1}, {0,-1} }) do
+                local nx, ny = cur[1] + d[1], cur[2] + d[2]
+                local k = EZ.key(nx, ny, z)
+                if not visited[k] then
+                    local nsq = cell:getGridSquare(nx, ny, z)
+                    if nsq then
+                        local blocked = false
+                        pcall(function() blocked = csq:isBlockedTo(nsq) end)
+                        if blocked and passDoors then
+                            local dw = false
+                            pcall(function() dw = csq:isDoorTo(nsq) or csq:isWindowTo(nsq) end)
+                            if dw then blocked = false end
+                        end
+                        if not blocked then
+                            visited[k] = true
+                            queue[#queue + 1] = { nx, ny }
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return order, #order
+end
+
 local function onFill(player, context, worldobjects)
     local pl = pObj(player); if not pl then return end
     local sq = clickedSquare(worldobjects, player); if not sq then return end
@@ -82,6 +127,27 @@ local function onFill(player, context, worldobjects)
         end)
         sub:addOption("Define base: cancel", pl, function() basePending = nil; halo(pl, "Cancelled.") end)
     end
+
+    -- BASE: AUTO-DETECT the walled area around the clicked tile in one click.
+    -- Fill this floor, paint every reached tile into the base zone, highlight it.
+    -- Run it again on other floors (and in the basement) to add them the same way.
+    sub:addOption("AUTO-DETECT base here (walled area, this floor)", pl, function()
+        local tiles, n = floodDetect(sq, true)
+        local mode = "doors passed"
+        if not tiles then
+            tiles, n = floodDetect(sq, false)
+            mode = "strict -- fill leaked through an open gate/door, so doors blocked this run"
+        end
+        if not tiles then
+            halo(pl, "Area not enclosed (fill escaped even with doors blocked). Close the perimeter and retry, or use corners/rooms.")
+            return
+        end
+        local zone = ensureBaseZone()
+        for _, t in ipairs(tiles) do EZ.addTile(zone.id, t[1], t[2], z) end
+        showZone(playerNum, zone)
+        halo(pl, "Auto-detected " .. #tiles .. " tiles (" .. mode .. "). Total: " .. EZ.tileCount(zone) .. ". Smooth with Add tile / 5x5 / Cutout; repeat on other floors + basement.")
+        pcall(function() if EmpireBases and EmpireBases.syncKSToOurBase then EmpireBases.syncKSToOurBase(pl) end end)
+    end)
 
     -- BASE: add a whole ROOM in one click (exact irregular footprint, this floor).
     -- Uses PZ room detection: walk the room's def bounding box, keep only squares whose
