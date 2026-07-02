@@ -1340,7 +1340,11 @@ local function smartSort(player, opts)
             for _, it in ipairs(snap) do
                 local isBag = instanceof(it, "InventoryContainer")
                 -- worn-gear rule: combat kit inside a WORN container never sorts out
-                local wornKit = wornConts[cont] and LOADOUT_CATS[categoryOf(it)] == true
+                -- v19.9: worn-bag combat-kit gate REMOVED per King. Only equipped/
+                -- attached/favourite gear (isProtected) and ammo+mags for guns you
+                -- actually carry (isLoadoutItem) stay. Everything else in a worn
+                -- bag files to base like any loose loot.
+                local wornKit = false
                 swTotal = swTotal + 1
                 if isProtected(it) then swProt = swProt + 1
                 elseif isLoadoutItem(it) then swLoad = swLoad + 1
