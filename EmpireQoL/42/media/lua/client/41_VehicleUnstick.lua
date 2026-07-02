@@ -1,102 +1,45 @@
--- Empire QoL :: 41_VehicleUnstick.lua
--- Right-click at a vehicle -> "Empire: Unstick vehicle". Fixes the two classic
--- physics screws: (1) vehicle sunk into the ground and immovable, (2) motorbike
--- fallen flat on its side with no way to right it.
+-- Empire QoL :: 41_VehicleUnstick.lua  (v2)
+-- Right-click at a vehicle -> "Empire: Unstick vehicle". Fixes vehicles sunk into
+-- the terrain and motorbikes fallen flat on their side.
 --
--- GROUNDED: position move uses the exact world-transform technique from the War
--- Thunder Vehicle Library's HeliMove.lua (running live in this mod list) --
--- reflect into BaseVehicle.jniTransform, shift the transform origin, write it
--- back. Transform axes: (worldX, HEIGHT, worldY). Uprighting uses setAngles(),
--- the same call tsarslib / Military Tool Kit use on their vehicles.
--- Singleplayer scope (direct transform write; no MP transmit).
+-- v2 REWRITE: v1 used the War Thunder lib's java-reflection transform move, which
+-- turns out to be DEBUG-MODE ONLY in B42 ("IllegalStateException: Not in debug").
+-- v2 uses the recipe from the game's OWN vehicle-angles tool (ISVehicleAngles.lua):
+--   setPhysicsActive(false) -> setAngles(level) -> setDebugZ(lift) -> setPhysicsActive(true)
+-- Freezing physics, levelling the body, nudging it up off the ground plane, then
+-- waking physics makes the engine re-settle the vehicle onto the terrain -- which
+-- pops it out of the ground and stands a fallen bike back up. No reflection.
 
-local LIFT = 0.85          -- how far to pop the vehicle UP out of the terrain
-local SEARCH_R = 6         -- ring-search radius for the nearest clear square
 local PLAYER_RANGE = 5     -- must be this close to the vehicle to use it
-
--- ---- transform move (WT-lib technique) ----
-local _wtFieldNum = nil
-local function getJavaFieldNum(object, fieldName)
-    for i = 0, getNumClassFields(object) - 1 do
-        local javaField = getClassField(object, i)
-        if luautils.stringEnds(tostring(javaField), '.' .. fieldName) then
-            return i
-        end
-    end
-end
-
-local function moveVehicle(vehicle, x_delta, up_delta, y_delta)
-    if _wtFieldNum == nil then
-        _wtFieldNum = getJavaFieldNum(vehicle, "jniTransform")
-    end
-    if not _wtFieldNum then return false end
-    local ok = pcall(function()
-        local tmpTransform = getClassFieldVal(vehicle, getClassField(vehicle, _wtFieldNum))
-        local wTransform = vehicle:getWorldTransform(tmpTransform)
-        local origin = getClassFieldVal(wTransform, getClassField(wTransform, 1))
-        origin:set(origin:x() + x_delta, origin:y() + up_delta, origin:z() + y_delta)
-        vehicle:setWorldTransform(wTransform)
-    end)
-    return ok
-end
-
--- ---- nearest clear square: ring search out from the vehicle ----
-local function findClearSquare(vx, vy, vz)
-    local cell = getCell()
-    if not cell then return nil end
-    local cx, cy = math.floor(vx), math.floor(vy)
-    for r = 1, SEARCH_R do
-        for dx = -r, r do
-            for dy = -r, r do
-                if math.max(math.abs(dx), math.abs(dy)) == r then   -- ring shell only
-                    local sq = cell:getGridSquare(cx + dx, cy + dy, vz)
-                    if sq then
-                        local free = false
-                        pcall(function() free = sq:isFree(false) end)
-                        if free then
-                            -- don't drop it onto another parked vehicle
-                            local hasVeh = false
-                            pcall(function() hasVeh = sq:getVehicleContainer() ~= nil end)
-                            if not hasVeh then return sq end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
+local LIFT = 0.45          -- setDebugZ lift (0..1 of a tile) before physics wake
 
 local function unstick(player, veh)
     if not player or not veh then return end
-    -- never yank a vehicle someone is driving
     local driver = nil
     pcall(function() driver = veh:getDriver() end)
     if driver then
-        HaloTextHelper.addTextWithArrow(player, "Get out of the vehicle first", "[br/]", false, HaloTextHelper.getColorRed())
+        pcall(function() HaloTextHelper.addTextWithArrow(player, "Get out of the vehicle first", "[br/]", false, HaloTextHelper.getColorRed()) end)
         return
     end
-    local vx, vy, vz = 0, 0, 0
-    pcall(function() vx = veh:getX(); vy = veh:getY(); vz = math.floor(veh:getZ()) end)
-    if vz < 0 then vz = 0 end
 
-    local sq = findClearSquare(vx, vy, vz)
-    local dx, dy = 0, 0
-    if sq then
-        dx = (sq:getX() + 0.5) - vx
-        dy = (sq:getY() + 0.5) - vy
-    end
-    -- move to the clear square (or just straight up if none found) + pop out of terrain
-    local movedOk = moveVehicle(veh, dx, LIFT, dy)
-    -- UPRIGHT: zero roll & pitch, keep the heading -- rights a fallen bike.
-    pcall(function() veh:setAngles(0, veh:getAngleY(), 0) end)
+    local okAngles = false
+    pcall(function() veh:setPhysicsActive(false) end)
+    -- level the body: zero roll & pitch, keep heading (rights a fallen bike).
+    -- Units match vanilla: tsarslib feeds getAngleX/Y/Z straight back into setAngles.
+    pcall(function() veh:setAngles(0, veh:getAngleY(), 0); okAngles = true end)
+    -- nudge it up off the ground plane so the physics re-settle drops it ON the
+    -- terrain instead of leaving it embedded. setDebugZ may not exist on every
+    -- build -- pcall'd, and the angles+physics cycle alone fixes most cases.
+    pcall(function() veh:setDebugZ(LIFT) end)
+    pcall(function() veh:setPhysicsActive(true) end)
 
-    if movedOk then
-        HaloTextHelper.addTextWithArrow(player, "Vehicle unstuck - lifted, uprighted" .. (sq and ", moved to clear ground" or ""), "[br/]", false, HaloTextHelper.getColorGreen())
-        player:Say("That should do it.")
+    if okAngles then
+        pcall(function()
+            HaloTextHelper.addTextWithArrow(player, "Vehicle uprighted + re-settled", "[br/]", false, HaloTextHelper.getColorGreen())
+            player:Say("That should do it.")
+        end)
     else
-        -- transform reflection failed (API shift?) -- at least the upright ran
-        HaloTextHelper.addTextWithArrow(player, "Uprighted only - couldn't shift position", "[br/]", false, HaloTextHelper.getColorWhite())
+        pcall(function() HaloTextHelper.addTextWithArrow(player, "Couldn't adjust this vehicle", "[br/]", false, HaloTextHelper.getColorRed()) end)
     end
 end
 
@@ -121,4 +64,4 @@ local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, te
 end
 Events.OnFillWorldObjectContextMenu.Add(onFillWorldObjectContextMenu)
 
-print("[EmpireQoL] Vehicle Unstick loaded. Right-click at a stuck/sunk/fallen vehicle -> 'Empire: Unstick vehicle'.")
+print("[EmpireQoL] Vehicle Unstick v2 loaded (vanilla physics-cycle technique; no debug reflection).")
