@@ -97,12 +97,11 @@ end
 -- everything on you. So on build click, BEFORE the ghost cursor is created, pull the
 -- selected recipe's missing tools AND input materials from base storage into the
 -- player's inventory. Instant move, same pattern as the mechanics quartermaster.
-local function fetchForBuild(panel)
-    local playerObj = panel and panel.player
-    if not playerObj then return end
-    local recipe = nil
-    pcall(function() recipe = panel.logic and panel.logic:getRecipe() end)
-    if not recipe then return end
+-- Exported: one quartermaster for every window. Pulls the recipe's tools + input
+-- materials (x times, for batch crafts) from base storage into the player's inventory.
+function EmpireQoL_FetchForRecipe(playerObj, recipe, times)
+    if not playerObj or not recipe then return end
+    times = times or 1
     local inv = playerObj:getInventory()
     local src = EmpireQoL_BaseContainers(playerObj)
     if not src or #src == 0 then return end
@@ -147,6 +146,7 @@ local function fetchForBuild(panel)
         pcall(function() need = inputScript:getIntAmount() end)
         if (not need) or need < 1 then pcall(function() need = inputScript:getAmount() end) end
         if (not need) or need < 1 then need = 1 end
+        need = need * times
         local have = 0
         local types = {}
         for m = 0, possible:size() - 1 do
@@ -183,6 +183,15 @@ local function fetchForBuild(panel)
         print("[EmpireQoL] CraftFromBase: build quartermaster fetched " .. #fetched .. " item(s) to player")
         pcall(function() if EmpireBaseCache and EmpireBaseCache.invalidate then EmpireBaseCache.invalidate() end end)
     end
+end
+
+local function fetchForBuild(panel)
+    local playerObj = panel and panel.player
+    if not playerObj then return end
+    local recipe = nil
+    pcall(function() recipe = panel.logic and panel.logic:getRecipe() end)
+    if not recipe then return end
+    EmpireQoL_FetchForRecipe(playerObj, recipe, 1)
 end
 
 local function shim(klassName, methodName)
@@ -249,6 +258,20 @@ Events.OnGameStart.Add(function()
                 return prev(self, ...)
             end
             print("[EmpireQoL] CraftFromBase: build quartermaster armed (tools + materials fetched from base on build click)")
+        end
+        -- v7: same quartermaster on the CRAFT button (handcraft + craft stations).
+        -- startHandcraft carries the batch quantity, so batch crafts fetch enough.
+        local ncap = _G["NC_CraftActionPanel"]
+        if ncap and type(ncap.startHandcraft) == "function" then
+            local prevSH = ncap.startHandcraft
+            ncap.startHandcraft = function(self, force, craftTimes, ...)
+                pcall(function()
+                    local rec = self.logic and self.logic:getRecipe()
+                    if rec then EmpireQoL_FetchForRecipe(self.player, rec, craftTimes or 1) end
+                end)
+                return prevSH(self, force, craftTimes, ...)
+            end
+            print("[EmpireQoL] CraftFromBase: craft quartermaster armed (materials fetched from base on craft click, batch-aware)")
         end
         print("[EmpireQoL] CraftFromBase v3 active (late-installed): cache + proximity fallback (r=" .. RADIUS .. ")")
     end
