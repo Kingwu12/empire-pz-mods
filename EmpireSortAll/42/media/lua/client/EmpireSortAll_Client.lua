@@ -1003,7 +1003,7 @@ local function smartSort(player, opts)
     -- unlabelled box. Load-shared WITHIN each tier (emptiest first) but tiers kept in
     -- order, so fresh food still fills fridges/designated homes before loose shelves --
     -- it just spreads evenly across them instead of jamming the first.
-    local function spillCands(cat)
+    local function spillCands(cat, emergency)
         local out, seen = {}, {}
         local desig, gen = {}, {}
         for _, c in ipairs(destsFor[cat] or {}) do
@@ -1015,6 +1015,18 @@ local function smartSort(player, opts)
         push(byPolicy(cat, desig))     -- designated homes (fridges/tagged/affinity)
         push(byPolicy(cat, gen))       -- general boxes already holding this category
         push(byPolicy(cat, generals))  -- any general box at all
+        -- EMERGENCY TIER (deposits only): the truck/inventory must DRAIN. Any remaining
+        -- scanned container with room takes the overflow -- tagged boxes included --
+        -- EXCEPT cold (food-only, strict) and compost homes. Overflow self-heals: the
+        -- magnet pass pulls tagged categories home when their shelf frees up, and the
+        -- eviction pass re-files the rest on the next tidy.
+        if emergency then
+            local rest = {}
+            for _, st in ipairs(stores) do
+                if not seen[st.c] and not st.cold and not st.compost then rest[#rest + 1] = st.c end
+            end
+            push(byFreeDesc(rest))
+        end
         return out
     end
 
@@ -1240,14 +1252,18 @@ local function smartSort(player, opts)
                             local cat = categoryOf(it)
                             activeCats[cat] = true; anyCarried = true
                             local dest = homeFor(cat)
-                            if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest, carried = true } end
+                            -- no proper home -> STILL plan it: the emergency tier at
+                            -- apply time drains it into any spare container.
+                            if dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest, carried = true } end
                         end
                     else
                         local cat = categoryOf(it)
                         activeCats[cat] = true; anyCarried = true
                         local dest = homeFor(cat)
-                        if dest and dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest, carried = true }
-                        elseif not dest then noHomeCat[cat] = (noHomeCat[cat] or 0) + 1 end
+                        -- no proper home -> STILL plan it: the emergency tier at apply
+                        -- time drains it into any spare container instead of leaving it
+                        -- in the truck. "No home" is now judged at apply time.
+                        if dest ~= cont then moves[#moves+1] = { item = it, from = cont, to = dest, carried = true } end
                     end
                 end
             end
@@ -1284,12 +1300,16 @@ local function smartSort(player, opts)
                 end)
                 if fits then
                     local ok = pcall(function() dest:addItem(item); fromCont:Remove(item) end)
-                    if ok then touched[dest] = true; touched[fromCont] = true; return true end
+                    if ok then touched[dest] = true; touched[fromCont] = true; return dest end
                 end
             end
         end
         return false
     end
+    -- container -> its store record (for overflow detection at apply time)
+    local stByCont = {}
+    for _, st in ipairs(stores) do stByCont[st.c] = st end
+    local overflowN = 0   -- deposits that landed in a NON-matching tagged box (emergency)
     for _, mv in ipairs(moves) do
         local stillThere = false
         pcall(function() stillThere = mv.from:contains(mv.item) end)
@@ -1308,9 +1328,16 @@ local function smartSort(player, opts)
                     blocked = blocked + 1   -- tagged home(s) full; left exactly where it was
                 end
             else
-                -- eviction / loose loot: file into any home (tagged or general)
-                if placeInto(mv.item, mv.from, spillCands(cat)) then
+                -- eviction / loose loot: file into any home (tagged or general).
+                -- CARRIED deposits (truck/inventory) get the EMERGENCY tier: they must
+                -- drain into ANY spare container rather than stay in the vehicle.
+                local dst = placeInto(mv.item, mv.from, spillCands(cat, mv.carried == true))
+                if dst then
                     moved = moved + 1; byCat[cat] = (byCat[cat] or 0) + 1
+                    local stt = stByCont[dst]
+                    if stt and stt.designated and stt.homeCats and not stt.homeCats[cat] then
+                        overflowN = overflowN + 1   -- landed in a non-matching tagged box
+                    end
                 elseif coldConts[mv.from] then
                     -- non-food trapped in cold -> any free shelf, so the cold goes food-only
                     if placeInto(mv.item, mv.from, generals) then
@@ -1318,8 +1345,11 @@ local function smartSort(player, opts)
                     else
                         stuckCold = stuckCold + 1
                     end
+                elseif mv.carried and not destFor[cat] and #generals == 0 then
+                    -- carried item: no proper home existed AND even emergency failed
+                    noHomeCat[cat] = (noHomeCat[cat] or 0) + 1
                 else
-                    noRoom = noRoom + 1   -- not cold, every shelf for this category is full
+                    noRoom = noRoom + 1   -- every shelf for this category is full
                     noRoomCat[cat] = (noRoomCat[cat] or 0) + 1
                 end
             end
@@ -1399,7 +1429,7 @@ local function smartSort(player, opts)
             -- so dumping logs never re-shelves food lying on the floor. Empty-handed = full tidy.
             if not (anyCarried and not activeCats[cat]) then
             homeFor(cat)
-            local cands = spillCands(cat)
+            local cands = spillCands(cat, true)   -- floor deposits drain too (emergency tier)
             local placed = false
             if cands then
                 for _, dest in ipairs(cands) do
@@ -1523,6 +1553,12 @@ local function smartSort(player, opts)
         local cats = table.concat(noHomeList, ", ")
         HaloTextHelper.addTextWithArrow(player, noHomeN .. " items have NO home -- tag a box for: " .. cats, "[br/]", false, HaloTextHelper.getColorRed())
         player:Say("Nowhere set for " .. cats .. ". Tag a container for it and sort again.")
+    end
+
+    -- OVERFLOW: deposits that landed in a NON-matching tagged box because their proper
+    -- home was full/missing. They self-heal on later sorts once space opens.
+    if overflowN > 0 then
+        HaloTextHelper.addTextWithArrow(player, overflowN .. " items OVERFLOWED into spare boxes (will re-file when homes free up)", "[br/]", false, HaloTextHelper.getColorWhite())
     end
 
     -- FULL-SHELVES: items that HAVE a home category but every eligible container is
@@ -2010,4 +2046,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v18 loaded. Composter auto-detected (rot routes in, never out); PRIMARY 'fill first' homes; consolidate anchor stabilized + anchor-only merge + overfill guard; vehicle unload now reports leftovers + full shelves. Numpad3 = sort; Numpad4 = consolidate.")
+print("[EmpireSortAll] Smart Sort v19 loaded. Deposits now ALWAYS drain: emergency overflow into any spare box (except cold/compost), self-heals to proper homes later. + v18: composter auto-detect, PRIMARY homes, stable consolidate, vehicle unload report. Numpad3 = sort; Numpad4 = consolidate.")
