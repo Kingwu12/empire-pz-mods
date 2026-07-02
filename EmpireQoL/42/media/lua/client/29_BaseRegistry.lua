@@ -12,6 +12,12 @@ EmpireBases = EmpireBases or {}
 -- 2 = current floor +/- 2 (basement, ground, upper all reached from anywhere in the base).
 EmpireBases.FLOOR_SPREAD = 2
 
+-- How many floors BELOW the painted base to also sweep. The painted base usually only marks
+-- the floor you walked ("define base as this building"), so a basement under the same
+-- footprint never got scanned. Reaching down catches it. Empty floors sweep cheaply and the
+-- container list is cached ~20s. Bump this if your basement is deeper than 6 levels.
+EmpireBases.BASEMENT_REACH = 6
+
 local function store()
     local t
     pcall(function() t = ModData.getOrCreate("EmpireBases") end)
@@ -210,11 +216,16 @@ function EmpireBases.scanBounds(playerObj, radiusFallback)
     local pz = sq:getZ()
     local px, py = sq:getX(), sq:getY()
 
-    -- 1) live painted Empire Zones "base" zone (the highlight base) wins, and
-    --    covers exactly the floors you painted.
+    -- 1) live painted Empire Zones "base" zone (the highlight base) wins. Sweep the painted
+    --    floors, plus a reach DOWN for basements and up by FLOOR_SPREAD, and always include
+    --    the floor you're standing on.
     local zb = EmpireBases.getEmpireZoneBase()
     if zb and px >= zb.x1 and px <= zb.x2 and py >= zb.y1 and py <= zb.y2 then
-        return zb.x1, zb.x2, zb.y1, zb.y2, (zb.zmin or pz), (zb.zmax or pz), zb
+        local down = EmpireBases.BASEMENT_REACH or 6
+        local up   = EmpireBases.FLOOR_SPREAD or 2
+        local lo = math.min((zb.zmin or pz) - down, pz)
+        local hi = math.max((zb.zmax or pz) + up, pz)
+        return zb.x1, zb.x2, zb.y1, zb.y2, lo, hi, zb
     end
 
     -- 2) a registered base rectangle (legacy/SSC) -> whole base, +/- floor spread
@@ -229,6 +240,34 @@ function EmpireBases.scanBounds(playerObj, radiusFallback)
     -- 3) no base defined -> radius box around you, current floor only
     local r = radiusFallback or 12
     return px - r, px + r, py - r, py + r, pz, pz, nil
+end
+
+-- DOCK CHECK: true if the vehicle sits within n tiles (Chebyshev) of ANY painted base
+-- tile. Uses the freeform tile set directly (not the bounding box), so an L-shaped or
+-- hollow base only counts tiles you actually painted. z is ignored on purpose -- a truck
+-- on the street should dock to a multi-floor base. Cheap: runs once per right-click.
+function EmpireBases.vehicleNearBase(veh, n)
+    if not veh then return false end
+    n = n or 8
+    local vx, vy
+    pcall(function() vx = veh:getX(); vy = veh:getY() end)
+    if not vx or not vy then return false end
+    if not (EmpireZones and EmpireZones.all and EmpireZones.parseKey) then return false end
+    local found = false
+    pcall(function()
+        for _, zone in pairs(EmpireZones.all()) do
+            if zone and zone.type == "base" and zone.tiles then
+                for k in pairs(zone.tiles) do
+                    local tx, ty = EmpireZones.parseKey(k)
+                    if tx and math.abs(tx - vx) <= n and math.abs(ty - vy) <= n then
+                        found = true; break
+                    end
+                end
+            end
+            if found then break end
+        end
+    end)
+    return found
 end
 
 print("[EmpireBases] base registry loaded (seeds 'Main' from SSC bounds).")

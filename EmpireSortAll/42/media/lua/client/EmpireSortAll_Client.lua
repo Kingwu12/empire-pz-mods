@@ -1130,25 +1130,41 @@ local function smartSort(player, opts)
     end
 
     -- (2) loose loot the player is carrying (inventory + worn bags) -> homes.
+    -- WORN-GEAR LOADOUT RULE: a vest/rig/pouch you're WEARING is loadout by definition.
+    -- Its combat kit (ammo, mags, guns, gun parts, explosives, armour, meds) is NEVER
+    -- sorted out -- your rig keeps its layout. Non-combat loot in a worn backpack still
+    -- files normally, so coming home with a stuffed bag works exactly as before.
+    local LOADOUT_CATS = {
+        Ammo = true, AmmoVehicle = true, Gun = true, Weapon = true,
+        GunParts = true, Explosives = true, Armor = true, Medical = true,
+    }
+    local wornConts = {}       -- sub-inventories that live inside a WORN item
     local carried, seenC = {}, {}
-    local function addCarried(cont, depth)
+    local function addCarried(cont, depth, worn)
         if not cont or seenC[cont] or depth > 4 then return end
         seenC[cont] = true
         carried[#carried+1] = cont
+        if worn then wornConts[cont] = true end
         local items = nil
         pcall(function() items = cont:getItems() end)
         if not items then return end
         for i = 0, items:size() - 1 do
             local it = items:get(i)
             local sub = nil
+            local subWorn = worn
             if instanceof(it, "InventoryContainer") then
                 -- a bag you've marked "keep" (loadout bag) is skipped whole -- its
                 -- contents never get sorted out. Flag lives on the bag's ModData.
                 local keep = false
                 pcall(function() local md = it:getModData(); keep = md and md.empireKeepBag == true end)
                 if not keep then pcall(function() sub = it:getInventory() end) end
+                -- equipped/worn container (vest, rig, pouch, worn backpack) -> its whole
+                -- chain is "worn". Nested pouches inside a worn rig inherit the flag.
+                local eq = false
+                pcall(function() eq = it:isEquipped() end)
+                if eq then subWorn = true end
             end
-            if sub and sub ~= cont then addCarried(sub, depth + 1) end
+            if sub and sub ~= cont then addCarried(sub, depth + 1, subWorn) end
         end
     end
     pcall(function() addCarried(player:getInventory(), 0) end)
@@ -1208,7 +1224,9 @@ local function smartSort(player, opts)
             for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
             for _, it in ipairs(snap) do
                 local isBag = instanceof(it, "InventoryContainer")
-                if not isProtected(it) and not isLoadoutItem(it) then
+                -- worn-gear rule: combat kit inside a WORN container never sorts out
+                local wornKit = wornConts[cont] and LOADOUT_CATS[categoryOf(it)] == true
+                if not isProtected(it) and not isLoadoutItem(it) and not wornKit then
                     if isBag then
                         -- loose EMPTY bags (garbage/paper bag, spare duffel) are clutter ->
                         -- file them like any item. A bag with stuff inside is left so its

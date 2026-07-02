@@ -328,6 +328,32 @@ local function countNearbyCached(player, want)
     return n
 end
 
+-- rounds resolver: works for a GUN (its caliber) or a MAGAZINE (what it loads).
+-- Both expose getAmmoType():getItemKey() in B42 (same API TopOffMags uses).
+local function resolveRounds(it)
+    local ammoKey = nil
+    pcall(function() ammoKey = it:getAmmoType():getItemKey() end)
+    if ammoKey and tostring(ammoKey) ~= "" then
+        local want = {}; addTypeForms(want, ammoKey)
+        return { want = want, name = readableFromType(ammoKey), kind = "ammo" }
+    end
+    return nil
+end
+
+-- detached magazine test (mirrors TopOffMags): has ammo capacity, isn't a gun
+local function isDetachedMag(it)
+    local ok = false
+    pcall(function()
+        if it and it.getMaxAmmo and it:getMaxAmmo() and it:getMaxAmmo() > 0
+           and it.getAmmoType and it:getAmmoType() then
+            local isGun = false
+            pcall(function() isGun = instanceof(it, "HandWeapon") end)
+            ok = not isGun
+        end
+    end)
+    return ok
+end
+
 local function findGunMag(player, gun, res)
     if not player or not gun then return end
     res = res or resolveGunAmmo(gun)
@@ -379,6 +405,7 @@ local function onFillInv(player, context, items)
     local actual = nil
     pcall(function() actual = ISInventoryPane.getActualItems(items) end)
     if actual then
+        local handled = false
         for _, it in ipairs(actual) do
             local isGun = false
             pcall(function() isGun = instanceof(it, "HandWeapon") and it:isRanged() end)
@@ -393,7 +420,32 @@ local function onFillInv(player, context, items)
                 end
                 local capturedRes = res
                 context:addOption(label, playerObj, function() pcall(function() findGunMag(playerObj, it, capturedRes) end) end)
+                -- mag-fed gun: the option above lights MAGS only -- ALSO offer the loose
+                -- rounds it fires, so "where are my 9mm bullets" is one click too.
+                if res and res.kind == "magazine" then
+                    local r2 = resolveRounds(it)
+                    if r2 and r2.want then
+                        local cnt2 = countNearbyCached(playerObj, r2.want)
+                        local lbl2 = string.format("Find its ammo (%s \194\183 %d nearby)", r2.name or "rounds", cnt2)
+                        context:addOption(lbl2, playerObj, function() pcall(function() locateTypes(playerObj, r2.want, "rounds for this gun") end) end)
+                    end
+                end
+                handled = true
                 break
+            end
+        end
+        -- no gun in the selection: a right-clicked detached MAGAZINE gets "Find its ammo"
+        if not handled then
+            for _, it in ipairs(actual) do
+                if isDetachedMag(it) then
+                    local r = resolveRounds(it)
+                    if r and r.want then
+                        local cnt = countNearbyCached(playerObj, r.want)
+                        local lbl = string.format("Find its ammo (%s \194\183 %d nearby)", r.name or "rounds", cnt)
+                        context:addOption(lbl, playerObj, function() pcall(function() locateTypes(playerObj, r.want, "rounds for this mag") end) end)
+                    end
+                    break
+                end
             end
         end
     end
