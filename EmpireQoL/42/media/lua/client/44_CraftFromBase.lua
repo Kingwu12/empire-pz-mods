@@ -339,10 +339,80 @@ Events.OnGameStart.Add(function()
                         self.containers = ISInventoryPaneContextMenu.getContainers(self.character)
                         print("[EmpireQoL] craft QM: action-start containers reset to in-range set")
                     end
+                    -- v10: manualInputs hold refs to the EXACT items picked at click
+                    -- time -- shelf copies, while QM fetched different copies of the
+                    -- same types onto the player. Vanilla only remaps moved items in
+                    -- MP (fixMovedItems is isClient-gated). Do the SP equivalent:
+                    -- keep refs that are on the player, substitute same-fullType
+                    -- carried items for any ref that is not.
+                    if self.manualInputs and self.character then
+                        local inv = self.character:getInventory()
+                        local remapped, unresolved = 0, 0
+                        local usedIds = {}
+                        for _, items in pairs(self.manualInputs) do
+                            if items and items.size then
+                                for i = 0, items:size() - 1 do
+                                    local item = items:get(i)
+                                    if item then
+                                        local onMe = nil
+                                        pcall(function() onMe = inv:getItemById(item:getID()) end)
+                                        if onMe then
+                                            usedIds[item:getID()] = true
+                                        else
+                                            local ft, sub = nil, nil
+                                            pcall(function() ft = item:getFullType() end)
+                                            if ft then
+                                                local cand = nil
+                                                pcall(function() cand = inv:getAllTypeRecurse(ft) end)
+                                                if cand then
+                                                    for j = 0, cand:size() - 1 do
+                                                        local c2 = cand:get(j)
+                                                        if c2 and not usedIds[c2:getID()] then sub = c2; break end
+                                                    end
+                                                end
+                                            end
+                                            if sub then
+                                                items:set(i, sub)
+                                                usedIds[sub:getID()] = true
+                                                remapped = remapped + 1
+                                            else
+                                                unresolved = unresolved + 1
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        if remapped > 0 or unresolved > 0 then
+                            print("[EmpireQoL] craft QM: manual inputs remapped onto carried items = " .. remapped .. ", unresolved = " .. unresolved)
+                        end
+                    end
                 end)
                 return prevStart(self, ...)
             end
-            print("[EmpireQoL] CraftFromBase: action-start container reset armed (ISHandcraftAction.start)")
+            print("[EmpireQoL] CraftFromBase: action-start container reset + manual-input remap armed (ISHandcraftAction.start)")
+        end
+        -- v10: last-line rescue at the consume moment. If the recipe still cannot
+        -- perform with the manual selection, drop to auto-select -- the logic then
+        -- re-picks from the in-range containers (the carried QM items). Only fires
+        -- when the craft would otherwise produce NOTHING, so it strictly improves.
+        if hca and type(hca.performRecipe) == "function" then
+            local prevPR = hca.performRecipe
+            hca.performRecipe = function(self, ...)
+                pcall(function()
+                    if self.logic and self.logic.canPerformCurrentRecipe then
+                        local ok = self.logic:canPerformCurrentRecipe()
+                        print("[EmpireQoL] craft QM: consume-time canPerform = " .. tostring(ok))
+                        if ok == false then
+                            pcall(function() self.logic:setManualSelectInputs(false) end)
+                            pcall(function() ok = self.logic:canPerformCurrentRecipe() end)
+                            print("[EmpireQoL] craft QM: fallback auto-select; canPerform = " .. tostring(ok))
+                        end
+                    end
+                end)
+                return prevPR(self, ...)
+            end
+            print("[EmpireQoL] CraftFromBase: consume-time rescue armed (ISHandcraftAction.performRecipe)")
         end
         print("[EmpireQoL] CraftFromBase v3 active (late-installed): cache + proximity fallback (r=" .. RADIUS .. ")")
     end
