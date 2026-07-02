@@ -107,11 +107,25 @@ function EmpireQoL_FetchForRecipe(playerObj, recipe, times)
     if not src or #src == 0 then return end
     local fetched = {}
 
+    local function usesOf(it)
+        local u = 1
+        pcall(function()
+            local c = it:getCurrentUses()
+            if c and c > 0 then u = c end
+        end)
+        return u
+    end
+    -- recipe amounts are USES ("item 9 [Base.BlowTorch]" = 9 uses, not 9
+    -- torches). Sum uses per carried item; non-drainables report 1 each.
     local function haveCount(ft)
         local n = 0
         pcall(function()
             local res = inv:getAllTypeRecurse(ft)
-            n = res and res:size() or 0
+            if res then
+                for i = 0, res:size() - 1 do
+                    n = n + usesOf(res:get(i))
+                end
+            end
         end)
         return n
     end
@@ -131,11 +145,11 @@ function EmpireQoL_FetchForRecipe(playerObj, recipe, times)
                     local nm = ft
                     pcall(function() nm = got:getDisplayName() end)
                     fetched[#fetched + 1] = nm
-                    return true
+                    return usesOf(got)
                 end
             end
         end
-        return false
+        return 0
     end
     local function ensureInput(inputScript)
         if not inputScript then return end
@@ -156,12 +170,13 @@ function EmpireQoL_FetchForRecipe(playerObj, recipe, times)
         end
         local missing = need - have
         while missing > 0 do
-            local pulled = false
+            local pulled = 0
             for _, ft in ipairs(types) do
-                if pullOne(ft) then pulled = true; break end
+                pulled = pullOne(ft)
+                if pulled > 0 then break end
             end
-            if not pulled then break end
-            missing = missing - 1
+            if pulled <= 0 then break end
+            missing = missing - pulled
         end
     end
     pcall(function() ensureInput(recipe:getToolBoth()) end)
