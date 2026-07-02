@@ -83,7 +83,13 @@ local function quickRepair(playerObj, vehicle)
             pcall(function() cond = part:getCondition() or 100 end)
             pcall(function() repairable = part:getScriptPart() and part:getScriptPart():isRepairMechanic() end)
         end
-        if part and invItem and repairable and cond < COND_THRESHOLD then
+        -- destroyed parts (condition 0) cannot be repaired in vanilla at all --
+        -- the fixing gate refuses them after materials are already fetched.
+        -- Hand them to QuickReplace instead, before any fetching happens.
+        if part and invItem and repairable and cond <= 0 then
+            replaceOnly = replaceOnly + 1
+            noteSkip(part, cond, "destroyed -- use Quick replace")
+        elseif part and invItem and repairable and cond < COND_THRESHOLD then
             local fixingList = nil
             pcall(function() fixingList = FixingManager.getFixes(invItem) end)
             if fixingList and not fixingList:isEmpty() then
