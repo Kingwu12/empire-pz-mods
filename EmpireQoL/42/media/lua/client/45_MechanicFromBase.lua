@@ -130,10 +130,24 @@ local function fetchForPart(playerObj, part)
             end
         end)
     end
-    -- 3) REPAIR ("increase part health") materials: the Repair submenu is built from
-    --    the Fixing system -- FixingManager.getFixes(partItem) -> fixings -> fixers.
-    --    Fetch each fixer item (up to its required count, clamped) plus the fixing's
-    --    global tool (e.g. blowtorch) so the repair options light up.
+    if #fetched > 0 then
+        pcall(function()
+            HaloTextHelper.addTextWithArrow(playerObj, "Quartermaster: " .. table.concat(fetched, ", "), "[br/]", false, HaloTextHelper.getColorGreen())
+        end)
+        print("[EmpireQoL] MechanicFromBase fetched: " .. table.concat(fetched, ", "))
+    end
+end
+
+-- REPAIR MATERIALS, ON DEMAND. The Repair submenu greys its options against the
+-- player's own inventory, so materials must be carried BEFORE the menu opens --
+-- but pre-fetching every fixer for every fixing flooded the inventory. Instead:
+-- an explicit "Stock repair materials" option per part fetches, on one click,
+-- each fixing's global tool + fixers (correct B42 API: getNumberOfUse, fixer
+-- types qualified by the fixing's own module).
+local function fetchRepairMaterials(playerObj, part)
+    if not playerObj or not part then return end
+    local playerInv = playerObj:getInventory()
+    local fetched = {}
     pcall(function()
         local invItem = part:getInventoryItem()
         if not invItem then return end
@@ -141,6 +155,8 @@ local function fetchForPart(playerObj, part)
         if not fixingList or fixingList:isEmpty() then return end
         for i = 0, fixingList:size() - 1 do
             local fixing = fixingList:get(i)
+            local moduleName = nil
+            pcall(function() moduleName = fixing:getModule():getName() end)
             pcall(function()
                 local gi = fixing:getGlobalItem()
                 if gi then
@@ -156,8 +172,9 @@ local function fetchForPart(playerObj, part)
                     local fixer = fixers:get(j)
                     local ft, cnt = nil, 1
                     pcall(function() ft = fixer:getFixerName() end)
-                    pcall(function() cnt = fixer:getNumberOfItems() or 1 end)
+                    pcall(function() if fixer.getNumberOfUse then cnt = fixer:getNumberOfUse() or 1 end end)
                     if ft and ft ~= "" then
+                        if moduleName and not ft:find("%.", 1, false) then ft = moduleName .. "." .. ft end
                         if cnt > 4 then cnt = 4 end
                         while countTypeInInv(playerInv, ft) < cnt do
                             local it2, from2 = firstFromStorage(ft)
@@ -173,7 +190,12 @@ local function fetchForPart(playerObj, part)
         pcall(function()
             HaloTextHelper.addTextWithArrow(playerObj, "Quartermaster: " .. table.concat(fetched, ", "), "[br/]", false, HaloTextHelper.getColorGreen())
         end)
-        print("[EmpireQoL] MechanicFromBase fetched: " .. table.concat(fetched, ", "))
+        print("[EmpireQoL] MechanicFromBase repair stock: " .. table.concat(fetched, ", "))
+    else
+        print("[EmpireQoL] MechanicFromBase repair stock: nothing missing or nothing in base")
+        pcall(function()
+            HaloTextHelper.addTextWithArrow(playerObj, "Quartermaster: nothing to fetch", "[br/]", false, HaloTextHelper.getColorWhite())
+        end)
     end
 end
 
@@ -193,9 +215,36 @@ local function installMechShim()
             local playerObj = getSpecificPlayer(self.playerNum) or self.chr
             fetchForPart(playerObj, part)
         end)
-        return orig(self, part, x, y)
+        local r = orig(self, part, x, y)
+        -- inject "Stock repair materials" when this part has any fixing recipes
+        pcall(function()
+            local playerObj = getSpecificPlayer(self.playerNum) or self.chr
+            local invItem = part:getInventoryItem()
+            if playerObj and invItem and self.context then
+                local fixingList = FixingManager.getFixes(invItem)
+                if fixingList and not fixingList:isEmpty() then
+                    self.context:addOption("Empire: Stock repair materials", playerObj, fetchRepairMaterials, part)
+                end
+            end
+        end)
+        return r
     end
-    print("[EmpireQoL] MechanicFromBase active (late-installed): right-click a part -> quartermaster hands you part + tools")
+    -- BELT: when a specific repair IS clickable, top up that exact fixing from
+    -- base before the action validates (covers a global tool sitting in base).
+    if ISInventoryPaneContextMenu and type(ISInventoryPaneContextMenu.onFix) == "function" then
+        local prevFix = ISInventoryPaneContextMenu.onFix
+        ISInventoryPaneContextMenu.onFix = function(brokenObject, player, fixingNum, fixerNum, vehiclePart, ...)
+            pcall(function()
+                if vehiclePart then
+                    local playerObj = getSpecificPlayer(player)
+                    if playerObj then fetchRepairMaterials(playerObj, vehiclePart) end
+                end
+            end)
+            return prevFix(brokenObject, player, fixingNum, fixerNum, vehiclePart, ...)
+        end
+        print("[EmpireQoL] MechanicFromBase: onFix belt armed")
+    end
+    print("[EmpireQoL] MechanicFromBase v3 active: right-click = part + tools only; repair materials via explicit menu option")
 end
 
 -- ATA / tsarslib TUNING window: it keeps its own container list (containerListLua,
