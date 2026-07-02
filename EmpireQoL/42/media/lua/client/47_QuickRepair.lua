@@ -106,7 +106,23 @@ local function quickRepair(playerObj, vehicle)
                                 local ft, need = nil, 1
                                 pcall(function() ft = qualify(fixer:getFixerName(), moduleName) end)
                                 pcall(function() if fixer.getNumberOfUse then need = fixer:getNumberOfUse() or 1 end end)
-                                if ft then
+                                -- skill gate FIRST: never fetch for a fix the
+                                -- character cannot perform (vanilla tooltip API)
+                                local skillsOk = true
+                                pcall(function()
+                                    local sk = fixer:getFixerSkills()
+                                    if sk then
+                                        for s = 0, sk:size() - 1 do
+                                            local req = sk:get(s)
+                                            local perk = Perks.FromString(req:getSkillName())
+                                            if perk and playerObj:getPerkLevel(perk) < req:getSkillLevel() then
+                                                skillsOk = false
+                                                break
+                                            end
+                                        end
+                                    end
+                                end)
+                                if ft and skillsOk then
                                     local carried = invCount(playerInv, ft)
                                     local stock = baseCount(ft)
                                     -- reserve rule counts what must LEAVE the base
