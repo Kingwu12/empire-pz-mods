@@ -414,6 +414,8 @@ end
 -- string.format("%.1f"). Every weight read funnels through this: NaN/inf -> fallback.
 local function safeNum(x, fb)
     if type(x) ~= "number" or x ~= x or x == math.huge or x == -math.huge then return fb end
+    if x > 1e9 or x < -1e9 then return fb end
+    if x > -1e-6 and x < 1e-6 then return 0 end   -- denormal weights ALSO crash Kahlua's %f
     return x
 end
 
@@ -1627,12 +1629,83 @@ local function smartSort(player, opts)
     for cat, n in pairs(byCat) do parts[#parts+1] = n .. " " .. (LABELS[cat] or cat) end
     local breakdown = table.concat(parts, ", ")
 
+    -- PASS: PLACED-CAN RESTOCK. The cans ARE the storage; cabinets/shelves are bulk.
+    -- Each placed can PULLS matching-category stock out of ordinary storage until full
+    -- (fullest can tops off first). Never raided: PRIMARY-marked containers (explicit
+    -- King choice), other placed cans (curated), compost and cold homes. Respects the
+    -- carry-scope gate so dumping logs never reshuffles the armoury. The can's own
+    -- isItemAllowed still applies -- a 9mm case only ever pulls 9mm.
+    local canRestocked = 0
+    do
+        local srcByCat = {}
+        local function sourcesFor(cat)
+            if srcByCat[cat] then return srcByCat[cat] end
+            local list = {}
+            for _, st2 in ipairs(stores) do
+                if (not st2.placedAmmo) and (not st2.compost) and (not st2.cold)
+                   and not isPrimaryCont(st2.c) then
+                    local items = nil
+                    pcall(function() items = st2.c:getItems() end)
+                    if items then
+                        for i = 0, items:size() - 1 do
+                            local it = items:get(i)
+                            if it and not isProtected(it) and not isRottenItem(it)
+                               and not isLoadoutItem(it) and categoryOf(it) == cat then
+                                list[#list+1] = { it = it, from = st2.c }
+                            end
+                        end
+                    end
+                end
+            end
+            srcByCat[cat] = list
+            return list
+        end
+        local cans = {}
+        for _, st2 in ipairs(stores) do if st2.placedAmmo then cans[#cans+1] = st2 end end
+        table.sort(cans, function(a, b)
+            local fa, fb2 = 0, 0
+            pcall(function() fa = a.c:getCapacityWeight() end)
+            pcall(function() fb2 = b.c:getCapacityWeight() end)
+            return safeNum(fa, 0) > safeNum(fb2, 0)
+        end)
+        for _, st2 in ipairs(cans) do
+            local cat = st2.placedCat or "Ammo"
+            if not (anyCarried and not activeCats[cat]) then
+                for _, rec in ipairs(sourcesFor(cat)) do
+                    if rec.it then
+                        local fits = false
+                        pcall(function()
+                            local ok = st2.c:isItemAllowed(rec.it) and st2.c:hasRoomFor(player, rec.it)
+                            if ok then
+                                local mx, cur, iw = capOf(st2.c, player), 0, 0
+                                pcall(function() cur = st2.c:getCapacityWeight() end)
+                                pcall(function() iw = rec.it:getActualWeight() end)
+                                cur, iw = safeNum(cur, 0), safeNum(iw, 0)
+                                if mx and mx > 0 and (cur + iw) > mx + 0.001 then ok = false end
+                            end
+                            fits = ok
+                        end)
+                        if fits then
+                            local ok2 = pcall(function() st2.c:addItem(rec.it); rec.from:Remove(rec.it) end)
+                            if ok2 then
+                                canRestocked = canRestocked + 1
+                                touched[st2.c] = true; touched[rec.from] = true
+                                rec.it = nil
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    moved = moved + canRestocked
+
     -- one-shot visibility: shows what F9 actually saw and did, so we never guess again.
     if EMPIRE_SORT_DEBUG then
         local tagged = 0
         for _, st in ipairs(stores) do if st.tag then tagged = tagged + 1 end end
-        print(string.format("[EmpireSort DIAG] stores=%d tagged=%d planned=%d moved=%d blocked=%d noRoom=%d stuckCold=%d rotten=%d composted=%d floorSorted=%d floorLeft=%d",
-            #stores, tagged, #moves, moved, blocked, noRoom, stuckCold, rottenDumped, rottenComposted, floorSorted, floorLeft))
+        print(string.format("[EmpireSort DIAG] stores=%d tagged=%d planned=%d moved=%d blocked=%d noRoom=%d stuckCold=%d rotten=%d composted=%d floorSorted=%d floorLeft=%d canRestock=%d",
+            #stores, tagged, #moves, moved, blocked, noRoom, stuckCold, rottenDumped, rottenComposted, floorSorted, floorLeft, canRestocked))
         for _, st in ipairs(stores) do
             local tg = "-"
             if st.tag then local k = {}; for c in pairs(st.tag) do k[#k+1] = c end; tg = table.concat(k, "+") end
@@ -2184,4 +2257,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v19.6 loaded. Hardened vs corrupted item weights (NaN crash), modded-gun ammo-type fix, floor rot now composts. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
+print("[EmpireSortAll] Smart Sort v19.7 loaded. CAN RESTOCK: placed cans now PULL matching stock from cabinets/shelves until full (PRIMARY-marked never raided). Denormal-weight crash fixed. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
