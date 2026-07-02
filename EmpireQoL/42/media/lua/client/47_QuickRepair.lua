@@ -58,7 +58,20 @@ local function pullFromBase(playerInv, ft, need, fetched)
     return true
 end
 
-local function quickRepair(playerObj, vehicle)
+local MAX_PASSES = 4
+local _watcher = nil
+
+local function queueEmpty(playerObj)
+    local empty = true
+    pcall(function()
+        local q = ISTimedActionQueue.getTimedActionQueue(playerObj)
+        empty = (not q) or (not q.queue) or (#q.queue == 0)
+    end)
+    return empty
+end
+
+local function quickRepair(playerObj, vehicle, pass)
+    pass = pass or 1
     if not playerObj or not vehicle then return end
     local playerInv = playerObj:getInventory()
     local fetched = {}
@@ -199,7 +212,7 @@ local function quickRepair(playerObj, vehicle)
         end
     end
 
-    print("[EmpireQoL] QuickRepair: queued=" .. #repaired
+    print("[EmpireQoL] QuickRepair pass " .. pass .. ": queued=" .. #repaired
         .. " reserveOrStockSkips=" .. skipReserve
         .. " skillGateSkips=" .. skipGate
         .. " noFixRecipe=" .. skipNoFix
@@ -210,9 +223,24 @@ local function quickRepair(playerObj, vehicle)
     end
     if #repaired > 0 then
         pcall(function()
-            HaloTextHelper.addTextWithArrow(playerObj, "Quick repair: " .. #repaired .. " part(s) queued", "[br/]", true, HaloTextHelper.getColorGreen())
+            HaloTextHelper.addTextWithArrow(playerObj, "Quick repair pass " .. pass .. ": " .. #repaired .. " part(s) queued", "[br/]", true, HaloTextHelper.getColorGreen())
         end)
         print("[EmpireQoL] QuickRepair parts: " .. table.concat(repaired, ", "))
+        -- MULTI-PASS: repairs heal partial condition per fix. When the action
+        -- queue drains, run the next pass automatically until a pass queues 0.
+        if pass < MAX_PASSES then
+            if _watcher then Events.OnTick.Remove(_watcher); _watcher = nil end
+            local ticks = 0
+            _watcher = function()
+                ticks = ticks + 1
+                if ticks % 30 ~= 0 then return end  -- check twice a second, not every tick
+                if queueEmpty(playerObj) then
+                    Events.OnTick.Remove(_watcher); _watcher = nil
+                    quickRepair(playerObj, vehicle, pass + 1)
+                end
+            end
+            Events.OnTick.Add(_watcher)
+        end
     else
         pcall(function()
             HaloTextHelper.addTextWithArrow(playerObj, "Quick repair: nothing repairable (see console)", "[br/]", false, HaloTextHelper.getColorWhite())
