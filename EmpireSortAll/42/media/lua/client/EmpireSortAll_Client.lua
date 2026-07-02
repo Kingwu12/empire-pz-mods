@@ -668,6 +668,41 @@ local function collectStorages(player, boundsOverride)
                             end
                         end
                     end
+                    -- PLACED AMMO CANS: an ammo can SET DOWN on a bench is a world-
+                    -- inventory item, not a furniture object -- invisible to the
+                    -- getObjects() scan above. Any placed InventoryContainer whose type
+                    -- contains "ammo" joins the store list as a dedicated Ammo home.
+                    -- Deliberately narrow (ammo only) so no random placed box or
+                    -- display bag starts receiving loot. Keep-bags/never-move skipped.
+                    local wos = nil
+                    pcall(function() wos = s:getWorldObjects() end)
+                    if wos then
+                        for wi = 0, wos:size() - 1 do
+                            local wo = wos:get(wi)
+                            local it = nil
+                            pcall(function() it = wo:getItem() end)
+                            if it and instanceof(it, "InventoryContainer") then
+                                local t = ""
+                                pcall(function() t = (it:getType() or ""):lower() end)
+                                if t:find("ammo", 1, true) then
+                                    local keep, nm = false, false
+                                    pcall(function() local md = it:getModData(); keep = md and md.empireKeepBag == true end)
+                                    pcall(function() nm = EmpireSortConfig and EmpireSortConfig.isNeverMove and EmpireSortConfig.isNeverMove(it) end)
+                                    local ic = nil
+                                    pcall(function() ic = it:getInventory() end)
+                                    local capMx = 0
+                                    if ic then pcall(function() capMx = ic:getCapacity() end) end
+                                    if ic and not seen[ic] and not keep and not nm and capMx > 0 then
+                                        seen[ic] = true
+                                        out[#out+1] = {
+                                            c = ic, obj = nil, ctype = "placedammo:" .. t,
+                                            tag = nil, placedAmmo = true,
+                                        }
+                                    end
+                                end
+                            end
+                        end
+                    end
                 end
             end
         end
@@ -869,6 +904,12 @@ local function smartSort(player, opts)
         elseif isFridge(st.ctype) then
             st.designated, st.homeCats = true, { Perishable = true }
             st.cold = true
+        elseif st.placedAmmo then
+            -- placed ammo can on a bench: dedicated Ammo home. Auto-designated --
+            -- item-form containers have no square, so ModData tags can't key them;
+            -- the "ammo" in their type IS the designation. isItemAllowed still lets
+            -- the can itself refuse non-ammo if its mod restricts contents.
+            st.designated, st.homeCats = true, { Ammo = true }
         else
             local aff = affinityOf(st.ctype)
             if aff then
@@ -1691,6 +1732,10 @@ local function consolidateTypes(player)
             st.designated, st.homeCats, st.cold, st.freezer = true, { Frozen = true }, true, true
         elseif isFridge(st.ctype) then
             st.designated, st.homeCats, st.cold = true, { Perishable = true }, true
+        elseif st.placedAmmo then
+            -- placed ammo cans: Ammo homes here too, else they'd read as "general"
+            -- and consolidate would merge random types into them.
+            st.designated, st.homeCats = true, { Ammo = true }
         else
             local aff = affinityOf(st.ctype)
             if aff then st.designated, st.homeCats = true, { [aff] = true }
@@ -2073,4 +2118,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v19.2 loaded. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
+print("[EmpireSortAll] Smart Sort v19.3 loaded. Placed ammo cans on benches now join as dedicated Ammo homes. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
