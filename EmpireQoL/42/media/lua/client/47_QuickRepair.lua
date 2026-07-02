@@ -63,6 +63,13 @@ local function quickRepair(playerObj, vehicle)
     local playerInv = playerObj:getInventory()
     local fetched = {}
     local repaired, skipReserve, skipNoFix, skipGate = {}, 0, 0, 0
+    local skipNames = {}   -- "PartId: reason" per skipped part
+    local replaceOnly = 0  -- damaged but the game only allows replacing, not repairing
+    local function noteSkip(part, cond, reason)
+        local pid = "part"
+        pcall(function() pid = part:getId() end)
+        skipNames[#skipNames + 1] = pid .. " (" .. tostring(cond) .. "%): " .. reason
+    end
     local queued = false
 
     local partCount = 0
@@ -165,16 +172,24 @@ local function quickRepair(playerObj, vehicle)
                             end)
                         else
                             skipGate = skipGate + 1  -- skill or requirement gate said no
+                            noteSkip(part, cond, "skill/requirements")
                         end
                     else
                         skipReserve = skipReserve + 1
+                        noteSkip(part, cond, "not enough stock above reserve")
                     end
                 else
                     skipReserve = skipReserve + 1  -- nothing plentiful enough / reserve rule
+                    noteSkip(part, cond, "no material clears skill+reserve")
                 end
             else
                 skipNoFix = skipNoFix + 1
+                noteSkip(part, cond, "replace-only (no repair recipe)")
             end
+        end
+        -- parts that are damaged but not repair-mechanic at all: replace-only by design
+        if part and invItem and (not repairable) and cond < COND_THRESHOLD then
+            replaceOnly = replaceOnly + 1
         end
     end
 
@@ -182,7 +197,11 @@ local function quickRepair(playerObj, vehicle)
         .. " reserveOrStockSkips=" .. skipReserve
         .. " skillGateSkips=" .. skipGate
         .. " noFixRecipe=" .. skipNoFix
+        .. " replaceOnlyParts=" .. replaceOnly
         .. (#fetched > 0 and (" | fetched: " .. table.concat(fetched, ", ")) or ""))
+    if #skipNames > 0 then
+        print("[EmpireQoL] QuickRepair skips: " .. table.concat(skipNames, " | "))
+    end
     if #repaired > 0 then
         pcall(function()
             HaloTextHelper.addTextWithArrow(playerObj, "Quick repair: " .. #repaired .. " part(s) queued", "[br/]", true, HaloTextHelper.getColorGreen())
