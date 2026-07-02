@@ -1,40 +1,86 @@
--- EmpireQoL :: 44_CraftFromBase.lua -- build & craft straight from base storage (B42 entity system)
--- THE quartermaster: stand in your base, open Build or a crafting panel, and every
--- container in the base counts as yours -- no hauling planks and nails by hand.
+-- EmpireQoL :: 44_CraftFromBase.lua (v2) -- build & craft straight from nearby storage
+-- v1 sourced containers ONLY from EmpireBaseCache, which needs the base to be
+-- registered in EmpireBases -- King's isn't (or the marker misses the workshop), so
+-- every shim silently no-op'd. v2: cache first, then PROXIMITY FALLBACK -- scan all
+-- containers within RADIUS tiles on every floor (the sorter/FindItem pattern), cached
+-- for a short TTL. Works anywhere your storage physically is, no registry required.
 --
--- B42.19 moved building/crafting onto the entity-recipe system. All material gathering
--- funnels through ISInventoryPaneContextMenu.getContainers(player), called inside a
--- handful of panel methods. We do NOT wrap that global -- it also serves every inventory
--- right-click, and augmenting it there is exactly the context-menu lag that killed the
--- previous (now-obsolete) 24/30/32 suite. Instead: SCOPED SHIM -- swap the gatherer in,
--- run the panel's own method, swap it back. Base containers exist only for the duration
--- of the panel's refresh.
---
--- Containers come from EmpireBaseCache (31): event-invalidated, debounced index of the
--- base you're standing in. Not inside a registered base -> no-op, pure vanilla.
--- The recipe engine reads AND consumes from the real container objects we hand it, so
--- counts are live-accurate and nothing can dupe.
+-- Scoped shims (unchanged): swap ISInventoryPaneContextMenu.getContainers only for
+-- the duration of the build/craft panel methods. The global stays vanilla -- that's
+-- what keeps right-click menus lag-free.
 
-local function baseContainers()
+local RADIUS   = 16
+local TTL_MS   = 10000
+local _cache, _cacheKey, _cacheAt = nil, nil, 0
+
+local function proximityContainers(player)
+    local sq = player and player:getSquare()
+    if not sq then return nil end
+    local px, py = sq:getX(), sq:getY()
+    local key = math.floor(px / 8) .. ":" .. math.floor(py / 8)
+    local now = getTimestampMs()
+    if _cache and _cacheKey == key and (now - _cacheAt) < TTL_MS then return _cache end
+    local out, seen = {}, {}
+    local cell = getCell()
+    for z = 0, 7 do
+        for x = px - RADIUS, px + RADIUS do
+            for y = py - RADIUS, py + RADIUS do
+                local s = cell:getGridSquare(x, y, z)
+                if s then
+                    local objs = s:getObjects()
+                    if objs then
+                        for i = 0, objs:size() - 1 do
+                            local o = objs:get(i)
+                            local n = 0
+                            pcall(function() n = o:getContainerCount() end)
+                            for ci = 0, (n or 1) - 1 do
+                                local c = nil
+                                pcall(function() c = o:getContainerByIndex(ci) end)
+                                if not c and ci == 0 then pcall(function() c = o:getContainer() end) end
+                                if c and not seen[c] then seen[c] = true; out[#out+1] = c end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    _cache, _cacheKey, _cacheAt = out, key, now
+    return out
+end
+
+-- Shared source: cache when the base registry knows where we are, proximity otherwise.
+-- Exported: 45_MechanicFromBase (and anything else) reuses this exact source.
+function EmpireQoL_BaseContainers(player)
     local out = nil
     pcall(function()
         if EmpireBaseCache and EmpireBaseCache.get then
             local cache = EmpireBaseCache.get()
-            if cache and cache.containers then out = cache.containers end
+            if cache and cache.containers and #cache.containers > 0 then out = cache.containers end
         end
     end)
-    return out
+    if out then return out end
+    local p = player
+    if not p then pcall(function() p = getSpecificPlayer(0) end) end
+    local prox = nil
+    pcall(function() prox = proximityContainers(p) end)
+    return prox
 end
 
--- append base containers to a vanilla getContainers result (java ArrayList), dedup by identity
+local _lastNote = 0
 local function augment(list)
-    local extra = baseContainers()
+    local extra = EmpireQoL_BaseContainers(nil)
     if not list or not extra then return list end
     pcall(function()
-        local seen = {}
+        local seen, added = {}, 0
         for i = 0, list:size() - 1 do seen[list:get(i)] = true end
         for _, c in ipairs(extra) do
-            if c and not seen[c] then list:add(c); seen[c] = true end
+            if c and not seen[c] then list:add(c); seen[c] = true; added = added + 1 end
+        end
+        local now = getTimestampMs()
+        if added > 0 and (now - _lastNote) > 5000 then
+            _lastNote = now
+            print("[EmpireQoL] CraftFromBase: +" .. added .. " storage containers visible to this panel")
         end
     end)
     return list
@@ -66,5 +112,5 @@ Events.OnGameStart.Add(function()
     shim("ISHandCraftPanel", "updateContainers")    -- handcraft panel counts
     shim("ISHandCraftPanel", "setSeeAllRecipe")     -- recipe list refresh path
     shim("ISCraftLogicPanel", "updateContainers")   -- crafting-station logic panel
-    print("[EmpireQoL] CraftFromBase active: build & craft panels see the whole base")
+    print("[EmpireQoL] CraftFromBase v2 active: cache + proximity fallback (r=" .. RADIUS .. ")")
 end)
