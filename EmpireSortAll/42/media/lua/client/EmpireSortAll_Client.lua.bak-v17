@@ -417,14 +417,6 @@ local function isFridge(ct)
     return ct == "fridge" or ct:find("fridge", 1, true) ~= nil
 end
 
--- Composter: vanilla container type is "composter" (see ContainerButtonIcons.composter
--- in vanilla source). Auto-recognized as the Compost home -- no manual tag needed.
--- Rotten food routes IN via PASS A; nothing is ever evicted/magneted/consolidated OUT.
-local function isComposter(ct)
-    ct = (ct or ""):lower()
-    return ct:find("compost", 1, true) ~= nil
-end
-
 -- Distinctive furniture that auto-claims a category. Kept deliberately small --
 -- generic crates/shelves/lockers are NOT here, because you have many of them and
 -- they have no single meaning. You tag those.
@@ -530,38 +522,6 @@ local function writeTag(c, str)
     if not key then return end
     local t = tagTable()
     if str == nil or str == "" then t[key] = nil else t[key] = str end
-end
-
--- ---- PRIMARY homes ("fill this one first") ----
--- Same position-key store as tags, separate table. A PRIMARY container is filled
--- before any other home of the same category; non-primary homes (basement deep
--- storage) only take the overflow. This is the armoury-vs-basement mechanism.
-local function primaryTable()
-    local t = nil
-    pcall(function() t = ModData.getOrCreate("EmpireStoragePrimary") end)
-    return t or {}
-end
-local function isPrimaryCont(c)
-    local key = containerKey(c)
-    if not key then return false end
-    return primaryTable()[key] == true
-end
-local function writePrimary(c, on)
-    local key = containerKey(c)
-    if not key then return end
-    local t = primaryTable()
-    if on then t[key] = true else t[key] = nil end
-end
--- stable partition: primary containers first, original order kept within each half.
-local function primaryFirst(list)
-    if not list or #list < 2 then return list end
-    local pri, rest = {}, {}
-    for _, c in ipairs(list) do
-        if isPrimaryCont(c) then pri[#pri+1] = c else rest[#rest+1] = c end
-    end
-    if #pri == 0 then return list end
-    for _, c in ipairs(rest) do pri[#pri+1] = c end
-    return pri
 end
 
 -- ---- storage-scan cache: containers don't move, so re-sweeping the whole base on
@@ -841,13 +801,8 @@ local function smartSort(player, opts)
     --   designated = true means it evicts anything outside homeCats.
     --   general containers (designated=false) keep whatever they already hold.
     for _, st in ipairs(stores) do
-        if isComposter(st.ctype) then
-            -- composter = AUTOMATIC Compost home. Designated so it never joins the
-            -- general pool / round-robin, and PASS A routes rot into it with no tag.
-            st.designated, st.homeCats, st.compost = true, { Compost = true }, true
-        elseif st.tag then
+        if st.tag then
             st.designated, st.homeCats = true, st.tag
-            if st.tag.Compost then st.compost = true end
         elseif isFreezer(st.ctype) then
             st.designated, st.homeCats = true, { Frozen = true }
             st.cold = true; st.freezer = true
@@ -991,10 +946,8 @@ local function smartSort(player, opts)
     -- by request -- food still spreads across fridges so one doesn't cram while others sit empty.
     local CONSOLIDATE_FIRST = { Ammo = true, AmmoVehicle = true }
     local function byPolicy(cat, list)
-        -- PRIMARY containers always outrank the rest of their tier (armoury before
-        -- basement crate); within each half the normal spread/fill policy applies.
-        if CONSOLIDATE_FIRST[cat] then return primaryFirst(byFillFirst(list)) end
-        return primaryFirst(byFreeDesc(list))
+        if CONSOLIDATE_FIRST[cat] then return byFillFirst(list) end
+        return byFreeDesc(list)
     end
     local isDesig = {}
     for _, st in ipairs(stores) do if st.designated then isDesig[st.c] = true end end
@@ -1028,10 +981,7 @@ local function smartSort(player, opts)
             local snap = {}
             for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
             for _, it in ipairs(snap) do
-                -- ROTTEN is owned entirely by PASS A (compost routing). Evicting it here
-                -- would rip rot OUT of the composter (rot classifies as Perishable, which
-                -- isn't in the composter's homeCats) and shelve it with fresh food.
-                if not isProtected(it) and not isRottenItem(it) then
+                if not isProtected(it) then
                     local cat = categoryOf(it)
                     if not st.homeCats[cat] then
                         local dest = homeFor(cat)
@@ -1057,9 +1007,7 @@ local function smartSort(player, opts)
         local mx, cur = 0, 0
         pcall(function() mx = st.c:getCapacity() end)
         pcall(function() cur = st.c:getCapacityWeight() end)
-        -- compost homes are never shed: their contents are rot mid-composting, and
-        -- shedding would push it back onto the food shelves.
-        if (not st.compost) and mx and mx > 0 and cur and cur > mx then
+        if mx and mx > 0 and cur and cur > mx then
             local items = st.c:getItems()
             local snap = {}
             for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
@@ -1242,7 +1190,6 @@ local function smartSort(player, opts)
     -- trapped in a fridge/freezer is reported, because that genuinely needs a shelf.
     local moved, touched, byCat = 0, {}, {}
     local stuckCold, blocked, noRoom = 0, 0, 0
-    local noRoomCat = {}   -- cat -> count of items whose every eligible shelf was full
     -- move `item` out of `fromCont` into the first of `candidates` that has room
     local function placeInto(item, fromCont, candidates)
         if not candidates then return false end
@@ -1302,7 +1249,6 @@ local function smartSort(player, opts)
                     end
                 else
                     noRoom = noRoom + 1   -- not cold, every shelf for this category is full
-                    noRoomCat[cat] = (noRoomCat[cat] or 0) + 1
                 end
             end
         end
@@ -1313,17 +1259,16 @@ local function smartSort(player, opts)
     -- rotten food goes IN there (for composting). Only if there's no compost bin -- or it's
     -- full -- does it fall back to the floor (old behaviour). Favourites are left alone.
     local rottenDumped, rottenComposted = 0, 0
-    -- find every compost bin in range up front: REAL composters (auto-detected by
-    -- container type) plus anything manually tagged "Compost". st.compost covers both.
+    -- find every compost bin in range up front
     local compostBins = {}
     for _, st in ipairs(stores) do
-        if st.compost then compostBins[#compostBins+1] = st end
+        if st.tag and st.tag.Compost then compostBins[#compostBins+1] = st end
     end
     -- SCOPE: only purge rotten food on a full tidy (empty-handed) or when you're actually
     -- depositing food. Dumping logs shouldn't make the sorter rummage every fridge for rot.
     local doRotten = (not anyCarried) or activeCats.Perishable or activeCats.Frozen or activeCats.DryFood
     for _, st in ipairs(stores) do
-        if doRotten and not st.compost then   -- never pull rotten OUT of any compost home
+        if doRotten and not (st.tag and st.tag.Compost) then   -- never pull rotten OUT of a compost bin
             local its = st.c:getItems()
             local snap = {}
             for i = 0, its:size() - 1 do snap[#snap+1] = its:get(i) end
@@ -1449,8 +1394,8 @@ local function smartSort(player, opts)
     if EMPIRE_SORT_DEBUG then
         local tagged = 0
         for _, st in ipairs(stores) do if st.tag then tagged = tagged + 1 end end
-        print(string.format("[EmpireSort DIAG] stores=%d tagged=%d planned=%d moved=%d blocked=%d noRoom=%d stuckCold=%d rotten=%d composted=%d floorSorted=%d floorLeft=%d",
-            #stores, tagged, #moves, moved, blocked, noRoom, stuckCold, rottenDumped, rottenComposted, floorSorted, floorLeft))
+        print(string.format("[EmpireSort DIAG] stores=%d tagged=%d planned=%d moved=%d blocked=%d stuckCold=%d rotten=%d composted=%d floorSorted=%d floorLeft=%d",
+            #stores, tagged, #moves, moved, blocked, stuckCold, rottenDumped, rottenComposted, floorSorted, floorLeft))
         for _, st in ipairs(stores) do
             local tg = "-"
             if st.tag then local k = {}; for c in pairs(st.tag) do k[#k+1] = c end; tg = table.concat(k, "+") end
@@ -1507,44 +1452,6 @@ local function smartSort(player, opts)
         player:Say("Nowhere set for " .. cats .. ". Tag a container for it and sort again.")
     end
 
-    -- FULL-SHELVES: items that HAVE a home category but every eligible container is
-    -- full. Was silently counted before -- items just stayed in the truck/inventory
-    -- with no explanation ("transfer didn't work"). Now it names the categories.
-    if noRoom > 0 then
-        local nrList = {}
-        for cat in pairs(noRoomCat) do nrList[#nrList+1] = (LABELS[cat] or cat) end
-        table.sort(nrList)
-        HaloTextHelper.addTextWithArrow(player, noRoom .. " items: every shelf FULL for " .. table.concat(nrList, ", "), "[br/]", false, HaloTextHelper.getColorRed())
-    end
-
-    -- VEHICLE UNLOAD REPORT: count what actually stayed in the vehicle and say so,
-    -- instead of leaving cargo behind silently. Bag shells with contents are skipped
-    -- (left by design -- their contents sort out; the bag files once empty).
-    if opts.vehicle then
-        local leftN = 0
-        pcall(function()
-            for _, vc in ipairs(vehicleStorageContainers(opts.vehicle)) do
-                local its = vc:getItems()
-                for i = 0, its:size() - 1 do
-                    local it = its:get(i)
-                    local skip = false
-                    if instanceof(it, "InventoryContainer") then
-                        local empty = true
-                        pcall(function() empty = it:getInventory():getItems():isEmpty() end)
-                        if not empty then skip = true end
-                    end
-                    if (not skip) and not isProtected(it) and not isLoadoutItem(it) then leftN = leftN + 1 end
-                end
-            end
-        end)
-        if leftN > 0 then
-            HaloTextHelper.addTextWithArrow(player, leftN .. " items STILL IN VEHICLE (reasons above)", "[br/]", false, HaloTextHelper.getColorRed())
-            player:Say(leftN .. " items stayed in the vehicle -- no home set, or every home shelf is full.")
-        else
-            HaloTextHelper.addTextWithArrow(player, "Vehicle fully unloaded", "[br/]", false, HaloTextHelper.getColorGreen())
-        end
-    end
-
     if moved > 0 then
         HaloTextHelper.addTextWithArrow(player, "SORTED " .. moved .. " items -> " .. contN .. " containers", "[br/]", false, HaloTextHelper.getColorGreen())
         if breakdown ~= "" then player:Say("Sorted: " .. breakdown .. ".")
@@ -1597,12 +1504,8 @@ local function consolidateTypes(player)
     --   cold = food only, tagged = its categories only, affinity furniture = its category.
     for _, st in ipairs(stores) do
         st.cold = false
-        if isComposter(st.ctype) then
-            -- composter: never a consolidate source OR target. Its rot is mid-composting.
-            st.designated, st.homeCats, st.compost = true, { Compost = true }, true
-        elseif st.tag then
+        if st.tag then
             st.designated, st.homeCats = true, st.tag
-            if st.tag.Compost then st.compost = true end
         elseif isFreezer(st.ctype) then
             st.designated, st.homeCats, st.cold, st.freezer = true, { Frozen = true }, true, true
         elseif isFridge(st.ctype) then
@@ -1618,7 +1521,6 @@ local function consolidateTypes(player)
     -- Cold mirrors Smart Sort exactly (freezer=Frozen, fridge=Perishable) so consolidate
     -- never pulls a frozen item out of the freezer that Smart Sort would just put back.
     local function eligible(st, cat)
-        if st.compost then return false end   -- compost homes never receive via consolidate
         if st.cold then
             if st.freezer then return cat == "Frozen" end
             return cat == "Perishable"
@@ -1636,16 +1538,12 @@ local function consolidateTypes(player)
     end
 
     -- Tally: for each item type, how many sit in each store + its category + grand total.
-    -- ROTTEN and compost-home contents are skipped entirely: a rotten cabbage has the
-    -- SAME fullType as a fresh one, so without this guard consolidate merged rot into
-    -- the fresh-food pile (and dragged it back out of the composter).
     local typeData = {}        -- ft -> { cat=, total=, perCont = { [st] = n } }
     for _, st in ipairs(stores) do
-        if not st.compost then
         local items = st.c:getItems()
         for i = 0, items:size() - 1 do
             local it = items:get(i)
-            if not isProtected(it) and not isRottenItem(it) then
+            if not isProtected(it) then
                 local ft = fullTypeOf(it)
                 if ft then
                     local d = typeData[ft]
@@ -1655,25 +1553,15 @@ local function consolidateTypes(player)
                 end
             end
         end
-        end -- close compost-source skip
     end
 
-    -- Pick each type's ANCHOR = where every copy of that type merges.
-    -- STABLE ANCHOR: primary home > tagged home for its category > biggest pile.
-    -- The flat "biggest pile wins" rule flip-flopped between runs as piles shifted,
-    -- which reshuffled the same items every sort. The tier bonuses dwarf any count,
-    -- so the anchor stays put once you've tagged/marked a home.
+    -- Pick each type's ANCHOR = the eligible container already holding the most of it.
     -- (Fall back to any eligible store if every current holder is ineligible -- e.g. a
     -- non-food item currently trapped only in a fridge.)
     for ft, d in pairs(typeData) do
-        local best, bestScore = nil, -math.huge
+        local best, bestN = nil, -1
         for st, n in pairs(d.perCont) do
-            if eligible(st, d.cat) then
-                local score = n
-                if st.tag and st.tag[d.cat] then score = score + 100000 end
-                if isPrimaryCont(st.c) then score = score + 1000000 end
-                if score > bestScore then best, bestScore = st, score end
-            end
+            if eligible(st, d.cat) and n > bestN then best, bestN = st, n end
         end
         if not best then
             for _, st in ipairs(stores) do
@@ -1690,20 +1578,7 @@ local function consolidateTypes(player)
             local dest = st.c
             if dest ~= fromC then
                 local fits = false
-                pcall(function()
-                    local ok = dest:isItemAllowed(it) and dest:hasRoomFor(player, it)
-                    -- OVERFILL GUARD (same as Smart Sort): hasRoomFor can report room past
-                    -- the weight cap. Overstuffing the anchor here made the next sort's
-                    -- shed pass pull items straight back out -- an every-press churn loop.
-                    if ok then
-                        local mx, cur, iw = 0, 0, 0
-                        pcall(function() mx = dest:getCapacity() end)
-                        pcall(function() cur = dest:getCapacityWeight() end)
-                        pcall(function() iw = it:getActualWeight() end)
-                        if mx and mx > 0 and (cur + (iw or 0)) > mx + 0.001 then ok = false end
-                    end
-                    fits = ok
-                end)
+                pcall(function() fits = dest:isItemAllowed(it) and dest:hasRoomFor(player, it) end)
                 if fits then
                     local ok = pcall(function() dest:addItem(it); fromC:Remove(it) end)
                     if ok then touched[dest] = true; touched[fromC] = true; return true end
@@ -1715,10 +1590,14 @@ local function consolidateTypes(player)
 
     for ft, d in pairs(typeData) do
         if d.anchor and d.total >= CONSOLIDATE_MIN_TOTAL then
-            -- ANCHOR-ONLY: items merge INTO the anchor or stay put. The old "spill to
-            -- the next-biggest holder" moved items SIDEWAYS between piles when the
-            -- anchor was full -- motion with zero merging, i.e. pure shuffle noise.
+            -- spill order: anchor first, then the other eligible holders biggest-pile-first
+            local holders = {}
+            for st, n in pairs(d.perCont) do
+                if st ~= d.anchor and eligible(st, d.cat) then holders[#holders+1] = { st = st, n = n } end
+            end
+            table.sort(holders, function(a, b) return a.n > b.n end)
             local cands = { d.anchor }
+            for _, h in ipairs(holders) do cands[#cands+1] = h.st end
 
             -- pull every instance that ISN'T already in the anchor toward it
             local didType = false
@@ -1728,7 +1607,7 @@ local function consolidateTypes(player)
                     local snap = {}
                     for i = 0, items:size() - 1 do
                         local it = items:get(i)
-                        if fullTypeOf(it) == ft and not isProtected(it) and not isRottenItem(it) then snap[#snap+1] = it end
+                        if fullTypeOf(it) == ft and not isProtected(it) then snap[#snap+1] = it end
                     end
                     for _, it in ipairs(snap) do
                         if placeInto(it, st.c, cands) then moved = moved + 1; didType = true
@@ -1842,19 +1721,6 @@ local function onToggleTag(playerNum, obj, cat)
     end)
 end
 
--- PRIMARY toggle: "fill this one first". The armoury cabinet is PRIMARY Ammo/Guns;
--- the basement crates hold the same tags un-marked, so they only take the overflow.
-local function onTogglePrimary(playerNum, cont)
-    pcall(function()
-        local on = not isPrimaryCont(cont)
-        writePrimary(cont, on)
-        local p = getSpecificPlayer(playerNum)
-        if not p then return end
-        local msg = on and "PRIMARY -- fills first; others take overflow" or "Primary off -- normal fill order"
-        pcall(function() if on then HaloTextHelper.addGoodText(p, msg) else HaloTextHelper.addBadText(p, msg) end end)
-    end)
-end
-
 -- right-click your vehicle while base storage is in range -> one-click transfer its loot
 -- into the base, sorted. Only the vehicle you're at is touched -- never a global sweep.
 -- How many tiles from ANY painted base tile a vehicle may be parked and still unload to
@@ -1919,10 +1785,6 @@ local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, te
     local statusTxt = current and ("Currently: " .. prettyTags(current)) or "Currently: not locked"
     local statusOpt = root:addOption(statusTxt, nil, nil)
     statusOpt.notAvailable = true
-
-    -- PRIMARY toggle right under the status line -- visible state, one click.
-    local priMark = isPrimaryCont(ownerC) and "[x] " or "[ ] "
-    root:addOption(priMark .. "PRIMARY - fill this one first", playerNum, onTogglePrimary, ownerC)
 
     for _, group in ipairs(TAG_GROUPS) do
         local gopt = root:addOption(group[1], nil, nil)
@@ -1992,4 +1854,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v18 loaded. Composter auto-detected (rot routes in, never out); PRIMARY 'fill first' homes; consolidate anchor stabilized + anchor-only merge + overfill guard; vehicle unload now reports leftovers + full shelves. Numpad3 = sort; Numpad4 = consolidate.")
+print("[EmpireSortAll] Smart Sort v17 loaded. Vehicle unload now falls back to the registered base rect if no painted zone (so it never sweeps the street), + [EmpireSort XFER] diag shows swept bounds/floors. Drinks by EatType; fridges magnet food; basement reach. Numpad3 = sort; Numpad4 = consolidate.")
