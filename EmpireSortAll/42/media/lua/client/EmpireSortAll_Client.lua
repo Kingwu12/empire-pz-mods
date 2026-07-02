@@ -1241,6 +1241,9 @@ local function smartSort(player, opts)
         Ammo = true, AmmoVehicle = true, Gun = true, Weapon = true,
         GunParts = true, Explosives = true, Armor = true, Medical = true,
     }
+    -- sweep telemetry: why did each carried item stay? (v19.8 diag)
+    local swTotal, swProt, swLoad, swWorn, swKept = 0, 0, 0, 0, 0
+    local swWornNames, swKeptNames = {}, {}
     local wornConts = {}       -- sub-inventories that live inside a WORN item
     local carried, seenC = {}, {}
     local function addCarried(cont, depth, worn)
@@ -1260,6 +1263,13 @@ local function smartSort(player, opts)
                 -- contents never get sorted out. Flag lives on the bag's ModData.
                 local keep = false
                 pcall(function() local md = it:getModData(); keep = md and md.empireKeepBag == true end)
+                if keep then
+                    swKept = swKept + 1
+                    if #swKeptNames < 4 then
+                        local nm = "?"; pcall(function() nm = it:getDisplayName() end)
+                        swKeptNames[#swKeptNames + 1] = nm
+                    end
+                end
                 if not keep then pcall(function() sub = it:getInventory() end) end
                 -- equipped/worn container (vest, rig, pouch, worn backpack) -> its whole
                 -- chain is "worn". Nested pouches inside a worn rig inherit the flag.
@@ -1331,6 +1341,16 @@ local function smartSort(player, opts)
                 local isBag = instanceof(it, "InventoryContainer")
                 -- worn-gear rule: combat kit inside a WORN container never sorts out
                 local wornKit = wornConts[cont] and LOADOUT_CATS[categoryOf(it)] == true
+                swTotal = swTotal + 1
+                if isProtected(it) then swProt = swProt + 1
+                elseif isLoadoutItem(it) then swLoad = swLoad + 1
+                elseif wornKit then
+                    swWorn = swWorn + 1
+                    if #swWornNames < 8 then
+                        local nm = "?"; pcall(function() nm = it:getDisplayName() end)
+                        swWornNames[#swWornNames + 1] = nm
+                    end
+                end
                 if not isProtected(it) and not isLoadoutItem(it) and not wornKit then
                     if isBag then
                         -- loose EMPTY bags (garbage/paper bag, spare duffel) are clutter ->
@@ -1361,6 +1381,16 @@ local function smartSort(player, opts)
                 end
             end
         end
+    end
+
+    do
+        local swPlan = 0
+        for _, m in ipairs(moves) do if m.carried then swPlan = swPlan + 1 end end
+        print("[EmpireSort DIAG] carried sweep: items=" .. swTotal .. " planned=" .. swPlan
+            .. " protected=" .. swProt .. " loadout=" .. swLoad .. " wornKit=" .. swWorn
+            .. " keptBags=" .. swKept)
+        if #swWornNames > 0 then print("[EmpireSort DIAG]   wornKit held: " .. table.concat(swWornNames, ", ")) end
+        if #swKeptNames > 0 then print("[EmpireSort DIAG]   keep-bags skipped whole: " .. table.concat(swKeptNames, ", ")) end
     end
 
     -- ---- apply moves: primary dest, then fall back to other containers of the same
