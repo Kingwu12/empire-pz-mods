@@ -20,14 +20,7 @@ local MAP = {
 
 local _last = 0
 
-local function targetExists(ft)
-    local ok = false
-    pcall(function() ok = getScriptManager():getItem(ft) ~= nil end)
-    if not ok then pcall(function() ok = ScriptManager.instance:getItem(ft) ~= nil end) end
-    return ok
-end
-
-local function convertContainer(c, out)
+local function convertContainer(c, out, stats)
     local items = nil
     pcall(function() items = c:getItems() end)
     if not items then return end
@@ -38,20 +31,23 @@ local function convertContainer(c, out)
         pcall(function() ft = it and it:getFullType() end)
         if ft and MAP[ft] then snap[#snap + 1] = it end
     end
+    stats.candidates = stats.candidates + #snap
     for _, old in ipairs(snap) do
         local tgt = MAP[old:getFullType()]
-        if targetExists(tgt) then
-            pcall(function()
-                local newIt = c:AddItem(tgt)
-                if newIt then
-                    pcall(function() newIt:setCondition(old:getCondition()) end)
-                    c:Remove(old)
-                    local nm = tgt
-                    pcall(function() nm = newIt:getDisplayName() end)
-                    out[#out + 1] = nm
-                end
-            end)
-        end
+        -- no script-existence pre-check: AddItem returns nil for unknown types,
+        -- and we only Remove the original after the twin exists.
+        pcall(function()
+            local newIt = c:AddItem(tgt)
+            if newIt then
+                pcall(function() newIt:setCondition(old:getCondition()) end)
+                c:Remove(old)
+                local nm = tgt
+                pcall(function() nm = newIt:getDisplayName() end)
+                out[#out + 1] = nm
+            else
+                stats.spawnFail = stats.spawnFail + 1
+            end
+        end)
     end
 end
 
@@ -60,21 +56,24 @@ local function convertEverywhere(player)
     if (now - _last) < 10000 then return end
     _last = now
     local out = {}
-    pcall(function() convertContainer(player:getInventory(), out) end)
+    local stats = { candidates = 0, spawnFail = 0 }
+    pcall(function() convertContainer(player:getInventory(), out, stats) end)
     -- one level of carried/worn bags (crafted parts usually ride in the backpack)
     pcall(function()
         local items = player:getInventory():getItems()
         for i = 0, items:size() - 1 do
             local it = items:get(i)
             if it and instanceof(it, "InventoryContainer") then
-                convertContainer(it:getInventory(), out)
+                convertContainer(it:getInventory(), out, stats)
             end
         end
     end)
     pcall(function()
         local src = EmpireQoL_BaseContainers and EmpireQoL_BaseContainers(player)
-        if src then for _, c in ipairs(src) do convertContainer(c, out) end end
+        if src then for _, c in ipairs(src) do convertContainer(c, out, stats) end end
     end)
+    print("[EmpireQoL] M998Compat: sweep candidates=" .. stats.candidates
+        .. " converted=" .. #out .. " spawnFail=" .. stats.spawnFail)
     if #out > 0 then
         print("[EmpireQoL] M998Compat: converted " .. #out .. " crafted part(s) to installable legacy items: " .. table.concat(out, ", "))
         pcall(function()
