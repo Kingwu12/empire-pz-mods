@@ -453,7 +453,9 @@ local function onFillInv(player, context, items)
         context:addOption("Clear find highlights", playerObj, function() pcall(clearHighlights) end)
     end
 end
-Events.OnFillInventoryObjectContextMenu.Add(onFillInv)
+-- Right-click menu UNREGISTERED per King (clutter): Numpad 2 prompt is the way in.
+-- onFillInv kept intact above -- re-register this one line to restore the options.
+-- Events.OnFillInventoryObjectContextMenu.Add(onFillInv)
 
 local function onTick()
     if clearAt and getTimestampMs() >= clearAt then pcall(clearHighlights) end

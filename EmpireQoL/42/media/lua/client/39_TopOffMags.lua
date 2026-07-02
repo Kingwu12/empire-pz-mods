@@ -207,23 +207,6 @@ Events.OnKeyPressed.Add(function(key)
     if key == TOPOFF_KEY then pcall(topOff) end
 end)
 
-Events.OnFillInventoryObjectContextMenu.Add(function(player, context, items)
-    local playerObj = player
-    if type(player) == "number" then playerObj = getSpecificPlayer(player) end
-    if not playerObj then return end
-    local actual = nil
-    pcall(function() actual = ISInventoryPane.getActualItems(items) end)
-    local relevant = false
-    if actual then
-        for _, it in ipairs(actual) do
-            local ok = false
-            pcall(function() ok = isMagazine(it) or (instanceof(it, "HandWeapon") and it:isRanged()) end)
-            if ok then relevant = true; break end
-        end
-    end
-    if relevant then
-        context:addOption("Top off all my mags (Numpad 8)", playerObj, function() pcall(function() topOff(playerObj) end) end)
-    end
-end)
+-- Right-click option REMOVED per King (clutter): Numpad 8 is the way in.
 
 print("[EmpireQoL] Top Off Mags v2 loaded. Numpad 8 fills all mags from rounds ANYWHERE on you (pouches/vests/bags); staged items return to their pouch after. Combat reload stays vanilla.")
