@@ -6,7 +6,7 @@
 -- trick the F9 sort uses -- so a cleared horde is looted in one press. Then F9 sorts it.
 
 -- ===== CONFIG =====
-local RANGE      = 5      -- tiles each direction to sweep for corpses
+local RANGE      = 7      -- tiles each direction to sweep for corpses
 local GRAB_CLOTHING = false  -- false = leave the rags; true = take clothing too (for sheets)
 local MAX_ITEMS  = 250    -- safety cap per press
 -- ==================

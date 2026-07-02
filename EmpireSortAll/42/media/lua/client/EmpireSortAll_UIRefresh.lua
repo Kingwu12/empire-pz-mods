@@ -45,7 +45,7 @@ end
 Events.OnTick.Add(onTick)
 
 local function onKeyPressed(key)
-    if key == Keyboard.KEY_NUMPAD3 or key == Keyboard.KEY_NUMPAD4 then
+    if key == Keyboard.KEY_NUMPAD3 then
         local p = getSpecificPlayer(0)
         if p and not p:isDead() then ticksLeft = 2 end
     end

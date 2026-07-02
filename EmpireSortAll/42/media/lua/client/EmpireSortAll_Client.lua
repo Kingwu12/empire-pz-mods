@@ -2027,17 +2027,14 @@ local function onFillInventoryObjectContextMenu(player, context, items)
 end
 Events.OnFillInventoryObjectContextMenu.Add(onFillInventoryObjectContextMenu)
 
--- ---- F9 = Smart Sort, End = Consolidate Duplicates ----
--- (Consolidate is on END, not F10: F10 is already taken by EmpireNPC's dashboard and
---  99_Debug's logging toggle. END is unused, so no double-fire.)
+-- ---- Numpad3 = Smart Sort (files + consolidates in one press) ----
+-- (Numpad4's separate consolidate was removed as a duplicate.)
 local function onKeyPressed(key)
     local player = getSpecificPlayer(0)
     if not player or player:isDead() then return end
     if key == Keyboard.KEY_NUMPAD3 then
         pcall(smartSort, player)        -- 1) file everything into its category home
         pcall(consolidateTypes, player) -- 2) then stack identical items into ONE pile
-    elseif key == Keyboard.KEY_NUMPAD4 then
-        pcall(consolidateTypes, player)
     else
         return
     end
@@ -2046,4 +2043,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v19 loaded. Deposits now ALWAYS drain: emergency overflow into any spare box (except cold/compost), self-heals to proper homes later. + v18: composter auto-detect, PRIMARY homes, stable consolidate, vehicle unload report. Numpad3 = sort; Numpad4 = consolidate.")
+print("[EmpireSortAll] Smart Sort v19 loaded. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
