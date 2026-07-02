@@ -9,9 +9,14 @@
 -- twin, condition preserved. Delete this file when KI5 cleans the root folder
 -- or the game stops double-loading version folders.
 
+-- v3: runtime autopsy proved the driven Humvee is Papa_Chad's mod, whose
+-- Bull_Bar slot accepts Base.M998_Bull_Bar2. ALL KI5 bullbar vintages funnel
+-- there. KI5 armor cross-vintage mappings stay for any future KI5 vehicle.
 local MAP = {
-    ["Base.92amgeneralM998BullbarA"]         = "Base.M998Bullbar1_Item",
-    ["Base.92amgeneralM998BullbarB"]         = "Base.M998Bullbar2_Item",
+    ["Base.92amgeneralM998BullbarA"]         = "Base.M998_Bull_Bar2",
+    ["Base.92amgeneralM998BullbarB"]         = "Base.M998_Bull_Bar2",
+    ["Base.M998Bullbar1_Item"]               = "Base.M998_Bull_Bar2",
+    ["Base.M998Bullbar2_Item"]               = "Base.M998_Bull_Bar2",
     ["Base.92amgeneralM998FrontArmor"]       = "Base.M998CarFrontDoorArmor1_Item",
     ["Base.92amgeneralM998RearArmor"]        = "Base.M998CarRearDoorArmor1_Item",
     ["Base.92amgeneralM998WindshieldArmor0"] = "Base.M998WindshieldArmor1_Item",
@@ -130,6 +135,9 @@ Events.OnGameStart.Add(function()
         any = hook("ISVehicleMechanics", "setVehicle") or any
         any = hook("ISVehicleMechanics", "createChildren") or any
         any = hook("ISVehicleTuning2", "createChildren") or any
+        -- proven-live trigger: part right-click (the window hooks above never
+        -- fired in testing; this one demonstrably does)
+        any = hook("ISVehicleMechanics", "doPartContextMenu") or any
         if not any then print("[EmpireQoL] M998Compat: no hookable windows found (game update?)") end
     end
     Events.OnTick.Add(install)
