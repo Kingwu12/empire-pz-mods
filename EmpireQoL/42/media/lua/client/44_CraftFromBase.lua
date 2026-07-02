@@ -294,6 +294,56 @@ Events.OnGameStart.Add(function()
             end
             print("[EmpireQoL] CraftFromBase: craft quartermaster armed (materials fetched from base on craft click, batch-aware)")
         end
+        -- v9: CONSUME-TIME CONTAINER RESET. Telemetry proved canPerform=true at
+        -- click but "ISBuildIsoEntity -> consume failed" at action completion:
+        -- the logic rides to the build site carrying our AUGMENTED container list
+        -- (base shelves included). performCurrentRecipe re-resolves inputs against
+        -- that list and shelf items fail range validation at the build spot -- the
+        -- fetched items on the player never get picked. Fix: right before consume,
+        -- reset the logic to the vanilla in-range container set (player inventory
+        -- is always in range; QM already put the materials there).
+        local bie = _G["ISBuildIsoEntity"]
+        if bie and type(bie.create) == "function" then
+            local prevCreate = bie.create
+            bie.create = function(self, ...)
+                pcall(function()
+                    local ch = self.character
+                    if ch and self.buildPanelLogic then
+                        self.buildPanelLogic:setContainers(ISInventoryPaneContextMenu.getContainers(ch))
+                        local ok = nil
+                        pcall(function() ok = self.buildPanelLogic:canPerformCurrentRecipe() end)
+                        print("[EmpireQoL] build QM: consume-time reset to in-range containers; canPerform = " .. tostring(ok))
+                        if ok == false then
+                            -- stale manual selection can survive the reset: drop to
+                            -- auto-select so java re-picks from carried items
+                            pcall(function() self.buildPanelLogic:setManualSelectInputs(false) end)
+                            pcall(function() ok = self.buildPanelLogic:canPerformCurrentRecipe() end)
+                            print("[EmpireQoL] build QM: fallback auto-select; canPerform = " .. tostring(ok))
+                        end
+                    end
+                end)
+                return prevCreate(self, ...)
+            end
+            print("[EmpireQoL] CraftFromBase: consume-time container reset armed (ISBuildIsoEntity.create)")
+        end
+        -- same medicine for CRAFT: ISHandcraftAction:start() rebuilds its logic
+        -- from a containers snapshot captured at click time (our augmented list).
+        -- In SP, fixMovedItems never runs (isClient-only), so stale refs survive.
+        -- Recompute the snapshot fresh + in-range at action start.
+        local hca = _G["ISHandcraftAction"]
+        if hca and type(hca.start) == "function" then
+            local prevStart = hca.start
+            hca.start = function(self, ...)
+                pcall(function()
+                    if self.character then
+                        self.containers = ISInventoryPaneContextMenu.getContainers(self.character)
+                        print("[EmpireQoL] craft QM: action-start containers reset to in-range set")
+                    end
+                end)
+                return prevStart(self, ...)
+            end
+            print("[EmpireQoL] CraftFromBase: action-start container reset armed (ISHandcraftAction.start)")
+        end
         print("[EmpireQoL] CraftFromBase v3 active (late-installed): cache + proximity fallback (r=" .. RADIUS .. ")")
     end
     Events.OnTick.Add(install)
