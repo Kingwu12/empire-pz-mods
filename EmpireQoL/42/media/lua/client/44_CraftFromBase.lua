@@ -410,7 +410,26 @@ Events.OnGameStart.Add(function()
                         end
                     end
                 end)
-                return prevPR(self, ...)
+                -- OUTPUT IDENTITY LOG: every created item passes through
+                -- Actions.addOrDropItem inside vanilla performRecipe. Capture it
+                -- to print the item the game ACTUALLY made -- internal fullType,
+                -- display name, condition -- so crafted-vs-required identity can
+                -- be compared against the PART AUTOPSY line by line.
+                local addOrig = Actions and Actions.addOrDropItem
+                if addOrig then
+                    Actions.addOrDropItem = function(chr, item, ...)
+                        pcall(function()
+                            print("[EmpireQoL] craft OUTPUT: " .. tostring(item:getFullType())
+                                .. " '" .. tostring(item:getDisplayName()) .. "'"
+                                .. " cond=" .. tostring(item:getCondition()))
+                        end)
+                        return addOrig(chr, item, ...)
+                    end
+                end
+                local r = { pcall(prevPR, self, ...) }
+                if addOrig then Actions.addOrDropItem = addOrig end
+                if not r[1] then error(r[2]) end
+                return r[2], r[3]
             end
             print("[EmpireQoL] CraftFromBase: consume-time rescue armed (ISHandcraftAction.performRecipe)")
         end
