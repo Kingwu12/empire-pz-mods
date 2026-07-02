@@ -408,6 +408,21 @@ local function containerType(cont)
     pcall(function() ctype = cont:getType() or "" end)
     return ctype
 end
+
+-- EFFECTIVE capacity -- what the game actually enforces and the UI displays.
+-- getCapacity() is only the BASE value; traits modify it (Organized = +30%,
+-- so a "50" crate really holds 65). Using base capacity made the sorter refuse
+-- to fill shelves past ~77%, and made the over-cap shed pass actively DRAIN
+-- legitimately full containers back down to base. Vanilla's own transfer action
+-- uses getEffectiveCapacity(player) (ISInventoryTransferAction.lua:548).
+local function capOf(c, player)
+    local mx = nil
+    local ok = pcall(function() mx = c:getEffectiveCapacity(player) end)
+    if (not ok) or (not mx) or mx <= 0 then
+        pcall(function() mx = c:getCapacity() end)
+    end
+    return mx or 0
+end
 local function isFreezer(ct)
     ct = (ct or ""):lower()
     return ct == "freezer" or ct == "icecream" or ct:find("freezer", 1, true) ~= nil
@@ -964,8 +979,7 @@ local function smartSort(player, opts)
 
     -- free weight (headroom) of a container -- drives load-sharing + the overfill guard.
     local function freeOf(c)
-        local mx, cur = 0, 0
-        pcall(function() mx = c:getCapacity() end)
+        local mx, cur = capOf(c, player), 0
         pcall(function() cur = c:getCapacityWeight() end)
         return (mx or 0) - (cur or 0)
     end
@@ -1066,8 +1080,7 @@ local function smartSort(player, opts)
     --     home of the same category; if none has room it stays put. This stops overflow
     --     landing in a general box that the (1b) magnet pass would just yank back (thrash).
     for _, st in ipairs(stores) do
-        local mx, cur = 0, 0
-        pcall(function() mx = st.c:getCapacity() end)
+        local mx, cur = capOf(st.c, player), 0
         pcall(function() cur = st.c:getCapacityWeight() end)
         -- compost homes are never shed: their contents are rot mid-composting, and
         -- shedding would push it back onto the food shelves.
@@ -1290,10 +1303,10 @@ local function smartSort(player, opts)
                 pcall(function()
                     local ok = dest:isItemAllowed(item) and dest:hasRoomFor(player, item)
                     -- OVERFILL GUARD: some containers report room past their weight cap,
-                    -- which is how a box ends up at 60/50. Enforce the cap ourselves.
+                    -- which is how a box ends up at 60/50. Enforce the cap ourselves --
+                    -- against EFFECTIVE capacity (trait-adjusted), same as vanilla.
                     if ok then
-                        local mx, cur, iw = 0, 0, 0
-                        pcall(function() mx = dest:getCapacity() end)
+                        local mx, cur, iw = capOf(dest, player), 0, 0
                         pcall(function() cur = dest:getCapacityWeight() end)
                         pcall(function() iw = item:getActualWeight() end)
                         if mx and mx > 0 and (cur + (iw or 0)) > mx + 0.001 then ok = false end
@@ -1522,7 +1535,7 @@ local function smartSort(player, opts)
             local n = 0; pcall(function() n = st.c:getItems():size() end)
             local w, mx = -1, -1
             pcall(function() w = st.c:getCapacityWeight() end)
-            pcall(function() mx = st.c:getCapacity() end)
+            mx = capOf(st.c, player)
             print(string.format("[EmpireSort DIAG]   ctype=%s tag=%s items=%d weight=%.1f/%.1f", tostring(st.ctype), tg, n, w, mx))
             -- For a LOCKED/designated container, list items that DON'T belong (foreign), with
             -- their game label + how we classified them. This is how we see WHY (e.g.) an
@@ -1766,9 +1779,9 @@ local function consolidateTypes(player)
                     -- OVERFILL GUARD (same as Smart Sort): hasRoomFor can report room past
                     -- the weight cap. Overstuffing the anchor here made the next sort's
                     -- shed pass pull items straight back out -- an every-press churn loop.
+                    -- Uses EFFECTIVE (trait-adjusted) capacity, same as vanilla transfers.
                     if ok then
-                        local mx, cur, iw = 0, 0, 0
-                        pcall(function() mx = dest:getCapacity() end)
+                        local mx, cur, iw = capOf(dest, player), 0, 0
                         pcall(function() cur = dest:getCapacityWeight() end)
                         pcall(function() iw = it:getActualWeight() end)
                         if mx and mx > 0 and (cur + (iw or 0)) > mx + 0.001 then ok = false end
@@ -2060,4 +2073,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v19 loaded. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
+print("[EmpireSortAll] Smart Sort v19.2 loaded. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
