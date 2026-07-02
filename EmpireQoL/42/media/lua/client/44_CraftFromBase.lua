@@ -32,11 +32,17 @@ local function proximityContainers(player)
                         for i = 0, objs:size() - 1 do
                             local o = objs:get(i)
                             local n = 0
-                            pcall(function() n = o:getContainerCount() end)
-                            for ci = 0, (n or 1) - 1 do
+                            pcall(function() n = o:getContainerCount() or 0 end)
+                            if n and n > 0 then
+                                for ci = 0, n - 1 do
+                                    local c = nil
+                                    pcall(function() c = o:getContainerByIndex(ci) end)
+                                    if c and not seen[c] then seen[c] = true; out[#out+1] = c end
+                                end
+                            else
+                                -- objects without getContainerCount (or reporting 0): single-container path
                                 local c = nil
-                                pcall(function() c = o:getContainerByIndex(ci) end)
-                                if not c and ci == 0 then pcall(function() c = o:getContainer() end) end
+                                pcall(function() c = o:getContainer() end)
                                 if c and not seen[c] then seen[c] = true; out[#out+1] = c end
                             end
                         end
@@ -94,6 +100,13 @@ local function shim(klassName, methodName)
     end
     local origMethod = k[methodName]
     k[methodName] = function(self, ...)
+        local now = getTimestampMs()
+        if (now - _lastNote) > 5000 then
+            _lastNote = now
+            local src = nil
+            pcall(function() src = EmpireQoL_BaseContainers(nil) end)
+            print("[EmpireQoL] CraftFromBase: " .. klassName .. ":" .. methodName .. " fired; storage source = " .. tostring(src and #src or 0) .. " containers")
+        end
         local gc = ISInventoryPaneContextMenu.getContainers
         ISInventoryPaneContextMenu.getContainers = function(...)
             return augment(gc(...))
@@ -106,11 +119,21 @@ local function shim(klassName, methodName)
     print("[EmpireQoL] CraftFromBase: shimmed " .. klassName .. ":" .. methodName)
 end
 
+-- INSTALL ONE TICK LATE: other mods (UI overhauls etc.) replace these same class
+-- methods inside their own OnGameStart. If we install at OnGameStart too, load order
+-- decides who survives. One tick later, everyone else has finished -- we wrap the winner.
 Events.OnGameStart.Add(function()
-    shim("ISBuildPanel", "updateContainers")        -- build menu material counts
-    shim("ISBuildPanel", "createBuildIsoEntity")    -- build placement / consume start
-    shim("ISHandCraftPanel", "updateContainers")    -- handcraft panel counts
-    shim("ISHandCraftPanel", "setSeeAllRecipe")     -- recipe list refresh path
-    shim("ISCraftLogicPanel", "updateContainers")   -- crafting-station logic panel
-    print("[EmpireQoL] CraftFromBase v2 active: cache + proximity fallback (r=" .. RADIUS .. ")")
+    local installed = false
+    local function install()
+        if installed then return end
+        installed = true
+        Events.OnTick.Remove(install)
+        shim("ISBuildPanel", "updateContainers")        -- build menu material counts
+        shim("ISBuildPanel", "createBuildIsoEntity")    -- build placement / consume start
+        shim("ISHandCraftPanel", "updateContainers")    -- handcraft panel counts
+        shim("ISHandCraftPanel", "setSeeAllRecipe")     -- recipe list refresh path
+        shim("ISCraftLogicPanel", "updateContainers")   -- crafting-station logic panel
+        print("[EmpireQoL] CraftFromBase v3 active (late-installed): cache + proximity fallback (r=" .. RADIUS .. ")")
+    end
+    Events.OnTick.Add(install)
 end)

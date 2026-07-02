@@ -115,18 +115,34 @@ local function fetchForPart(playerObj, part)
     end
 end
 
-Events.OnGameStart.Add(function()
+-- INSTALL ONE TICK LATE: AutoMechanics (active in this save) touches the same
+-- mechanics UI. Installing after everyone's OnGameStart means we wrap whatever won.
+local function installMechShim()
     if not (ISVehicleMechanics and type(ISVehicleMechanics.doPartContextMenu) == "function") then
         print("[EmpireQoL] MechanicFromBase: ISVehicleMechanics:doPartContextMenu not found -- skipped")
         return
     end
     local orig = ISVehicleMechanics.doPartContextMenu
     ISVehicleMechanics.doPartContextMenu = function(self, part, x, y)
+        local pid = "?"
+        pcall(function() pid = part:getId() end)
+        print("[EmpireQoL] MechanicFromBase: part right-click fired (" .. tostring(pid) .. ")")
         pcall(function()
             local playerObj = getSpecificPlayer(self.playerNum) or self.chr
             fetchForPart(playerObj, part)
         end)
         return orig(self, part, x, y)
     end
-    print("[EmpireQoL] MechanicFromBase active: right-click a part -> quartermaster hands you part + tools")
+    print("[EmpireQoL] MechanicFromBase active (late-installed): right-click a part -> quartermaster hands you part + tools")
+end
+
+Events.OnGameStart.Add(function()
+    local installed = false
+    local function install()
+        if installed then return end
+        installed = true
+        Events.OnTick.Remove(install)
+        installMechShim()
+    end
+    Events.OnTick.Add(install)
 end)
