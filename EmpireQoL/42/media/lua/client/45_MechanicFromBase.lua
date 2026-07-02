@@ -215,6 +215,37 @@ local function installMechShim()
             local playerObj = getSpecificPlayer(self.playerNum) or self.chr
             fetchForPart(playerObj, part)
         end)
+        -- PART AUTOPSY: the ground truth of why install is or isn't offered
+        pcall(function()
+            local playerObj = getSpecificPlayer(self.playerNum) or self.chr
+            local inv = playerObj:getInventory()
+            local hasInstall, canInst, slotItem = false, nil, "empty"
+            pcall(function() hasInstall = part:getTable("install") ~= nil end)
+            pcall(function() canInst = part:getVehicle():canInstallPart(playerObj, part) end)
+            pcall(function() local ii = part:getInventoryItem(); if ii then slotItem = ii:getFullType() end end)
+            print("[EmpireQoL] PART AUTOPSY (" .. tostring(pid) .. "): installTable=" .. tostring(hasInstall)
+                .. " canInstallPart=" .. tostring(canInst) .. " slot=" .. slotItem)
+            local types = nil
+            pcall(function() types = part:getItemType() end)
+            if types and not types:isEmpty() then
+                for i = 0, types:size() - 1 do
+                    local ft = tostring(types:get(i))
+                    local n, conds = 0, ""
+                    pcall(function()
+                        local list = inv:getAllTypeRecurse(ft)
+                        if list then
+                            n = list:size()
+                            for j = 0, n - 1 do
+                                conds = conds .. " cond=" .. tostring(list:get(j):getCondition())
+                            end
+                        end
+                    end)
+                    print("[EmpireQoL]   slot accepts: " .. ft .. " | carried x" .. n .. conds)
+                end
+            else
+                print("[EmpireQoL]   slot accepts: (no itemTypes)")
+            end
+        end)
         local r = orig(self, part, x, y)
         -- inject "Stock repair materials" when this part has any fixing recipes
         pcall(function()

@@ -18,6 +18,9 @@ local MAP = {
     ["Base.92amgeneralM998WindshieldArmor1"] = "Base.M998WindshieldArmor2_Item",
 }
 
+local REV = {}
+for k, v in pairs(MAP) do REV[v] = k end
+
 local _last = 0
 
 local function convertContainer(c, out, stats)
@@ -32,6 +35,24 @@ local function convertContainer(c, out, stats)
         if ft and MAP[ft] then snap[#snap + 1] = it end
     end
     stats.candidates = stats.candidates + #snap
+    -- condition floor for BOTH vintages: vanilla's install menu silently drops
+    -- items at condition 0 (VehicleUtils.getItems filters getCondition() > 0),
+    -- and crafted outputs can spawn at 0. Lift any M998 part at <=0 to 100.
+    pcall(function()
+        for i = 0, items:size() - 1 do
+            local it = items:get(i)
+            local ft = nil
+            pcall(function() ft = it and it:getFullType() end)
+            if ft and (MAP[ft] or REV[ft]) then
+                local cond = nil
+                pcall(function() cond = it:getCondition() end)
+                if cond ~= nil and cond <= 0 then
+                    pcall(function() it:setCondition(100) end)
+                    stats.condFloored = stats.condFloored + 1
+                end
+            end
+        end
+    end)
     for _, old in ipairs(snap) do
         local tgt = MAP[old:getFullType()]
         -- no script-existence pre-check: AddItem returns nil for unknown types,
@@ -56,7 +77,7 @@ local function convertEverywhere(player)
     if (now - _last) < 10000 then return end
     _last = now
     local out = {}
-    local stats = { candidates = 0, spawnFail = 0 }
+    local stats = { candidates = 0, spawnFail = 0, condFloored = 0 }
     pcall(function() convertContainer(player:getInventory(), out, stats) end)
     -- one level of carried/worn bags (crafted parts usually ride in the backpack)
     pcall(function()
@@ -73,7 +94,8 @@ local function convertEverywhere(player)
         if src then for _, c in ipairs(src) do convertContainer(c, out, stats) end end
     end)
     print("[EmpireQoL] M998Compat: sweep candidates=" .. stats.candidates
-        .. " converted=" .. #out .. " spawnFail=" .. stats.spawnFail)
+        .. " converted=" .. #out .. " spawnFail=" .. stats.spawnFail
+        .. " condFloored=" .. stats.condFloored)
     if #out > 0 then
         print("[EmpireQoL] M998Compat: converted " .. #out .. " crafted part(s) to installable legacy items: " .. table.concat(out, ", "))
         pcall(function()
