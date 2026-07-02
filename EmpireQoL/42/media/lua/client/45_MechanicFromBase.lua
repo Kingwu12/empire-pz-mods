@@ -301,9 +301,20 @@ local function installTuningQuartermaster()
     local prev = ISVehicleTuning2.onInstallPart
     ISVehicleTuning2.onInstallPart = function(self, button, ...)
         pcall(function()
+            print("[EmpireQoL] TuningQM: install click received")
             local player = self.character
             local box = self.getRecipeListBox and self:getRecipeListBox()
             local RecipeItem = box and box.items and box.items[box.selected] and box.items[box.selected].item
+            if not RecipeItem then
+                print("[EmpireQoL] TuningQM: selected recipe did not resolve (listbox state) -- fetch skipped")
+            else
+                local valid = nil
+                pcall(function() valid = self:IsRecipeValid(RecipeItem) end)
+                print("[EmpireQoL] TuningQM: recipe '" .. tostring(RecipeItem.name or RecipeItem.partName or "?")
+                    .. "' type=" .. tostring(RecipeItem.type)
+                    .. " IsRecipeValid=" .. tostring(valid)
+                    .. (RecipeItem.error and (" | error: " .. tostring(RecipeItem.error)) or ""))
+            end
             if player and RecipeItem then
                 local fetched = {}
                 pullList(player, RecipeItem.use, fetched)
