@@ -1081,7 +1081,9 @@ local function smartSort(player, opts)
                 if not isProtected(it) then
                     local iw = 0; pcall(function() iw = it:getActualWeight() end)
                     if st.tag then
-                        moves[#moves+1] = { item = it, from = st.c, magnet = true }
+                        -- shed=true: over-cap overflow MUST leave the box. Try sibling
+                        -- tagged homes first (magnet), then ANY container with room.
+                        moves[#moves+1] = { item = it, from = st.c, magnet = true, shed = true }
                     else
                         moves[#moves+1] = { item = it, from = st.c }
                     end
@@ -1321,17 +1323,32 @@ local function smartSort(player, opts)
             if (not mv.carried) and anyCarried and not activeCats[cat] then
                 -- leave this stored item exactly where it is
             elseif mv.magnet then
-                -- tag-pull: ONLY into a tagged container for this category. All full -> stay put.
+                -- tag-pull: into a tagged container for this category first.
                 if placeInto(mv.item, mv.from, byPolicy(cat, taggedDests[cat])) then
                     moved = moved + 1; byCat[cat] = (byCat[cat] or 0) + 1
+                elseif mv.shed then
+                    -- over-cap SHED with all sibling tagged homes full: it must still
+                    -- leave the box -- drain into any container with room (emergency).
+                    local dst = placeInto(mv.item, mv.from, spillCands(cat, true))
+                    if dst then
+                        moved = moved + 1; byCat[cat] = (byCat[cat] or 0) + 1
+                        overflowN = overflowN + 1
+                    else
+                        blocked = blocked + 1   -- literally the whole base is full
+                    end
                 else
-                    blocked = blocked + 1   -- tagged home(s) full; left exactly where it was
+                    -- normal gather with full home: item is already stored somewhere
+                    -- valid -- leave it exactly where it is (moving it to a random box
+                    -- would be pure churn). It gathers home when the shelf frees up.
+                    blocked = blocked + 1
                 end
             else
                 -- eviction / loose loot: file into any home (tagged or general).
-                -- CARRIED deposits (truck/inventory) get the EMERGENCY tier: they must
-                -- drain into ANY spare container rather than stay in the vehicle.
-                local dst = placeInto(mv.item, mv.from, spillCands(cat, mv.carried == true))
+                -- EMERGENCY tier is ALWAYS on: if every proper home is full, the item
+                -- drains into ANY container with room (unlabelled first, then any
+                -- non-matching box). Nothing stays misfiled just because its shelf is
+                -- full -- overflow self-heals to the proper home on later sorts.
+                local dst = placeInto(mv.item, mv.from, spillCands(cat, true))
                 if dst then
                     moved = moved + 1; byCat[cat] = (byCat[cat] or 0) + 1
                     local stt = stByCont[dst]
