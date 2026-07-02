@@ -202,6 +202,7 @@ end
 -- inventory + open loot windows only). Append base storage after its own gather, so
 -- HasAllRequiredItems and the ingredient panel see the whole base. Same source,
 -- same dedup, prints what it added.
+local _tuneNote = 0
 local function installTuningShim()
     if not (ISVehicleTuning2 and type(ISVehicleTuning2.getContainers) == "function") then
         print("[EmpireQoL] TuningFromBase: ISVehicleTuning2 not present -- skipped")
@@ -214,7 +215,11 @@ local function installTuningShim()
             if not self.containerListLua then return end
             local extra = EmpireQoL_BaseContainers(self.character)
             if not extra then
-                print("[EmpireQoL] TuningFromBase: storage source = 0 containers")
+                local nowT = getTimestampMs()
+                if nowT - _tuneNote > 10000 then
+                    _tuneNote = nowT
+                    print("[EmpireQoL] TuningFromBase: storage source = 0 containers")
+                end
                 return
             end
             local seen, added = {}, 0
@@ -226,7 +231,11 @@ local function installTuningShim()
                     added = added + 1
                 end
             end
-            print("[EmpireQoL] TuningFromBase: +" .. added .. " storage containers visible to tuning window")
+            local nowT = getTimestampMs()
+            if nowT - _tuneNote > 10000 then
+                _tuneNote = nowT
+                print("[EmpireQoL] TuningFromBase: +" .. added .. " storage containers visible to tuning window")
+            end
         end)
         return r
     end

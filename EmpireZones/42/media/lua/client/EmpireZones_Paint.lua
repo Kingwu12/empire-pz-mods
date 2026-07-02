@@ -131,7 +131,7 @@ local function onFill(player, context, worldobjects)
     -- BASE: AUTO-DETECT the walled area around the clicked tile in one click.
     -- Fill this floor, paint every reached tile into the base zone, highlight it.
     -- Run it again on other floors (and in the basement) to add them the same way.
-    sub:addOption("AUTO-DETECT base here (walled area, this floor)", pl, function()
+    sub:addOption("AUTO-DETECT base here (walled area, all floors + basement)", pl, function()
         local tiles, n = floodDetect(sq, true)
         local mode = "doors passed"
         if not tiles then
@@ -143,9 +143,30 @@ local function onFill(player, context, worldobjects)
             return
         end
         local zone = ensureBaseZone()
-        for _, t in ipairs(tiles) do EZ.addTile(zone.id, t[1], t[2], z) end
+        -- stamp the detected footprint on EVERY level that really exists there:
+        -- BASEMENT_REACH down + FLOOR_SPREAD up (registry constants). A level counts
+        -- when the square exists and has a real floor -- basements and upper storeys
+        -- join automatically, open sky above the yard doesn't.
+        local down = (EmpireBases and EmpireBases.BASEMENT_REACH) or 6
+        local up   = (EmpireBases and EmpireBases.FLOOR_SPREAD) or 2
+        local cell2 = getCell()
+        local painted = 0
+        for _, t in ipairs(tiles) do
+            for z2 = z - down, z + up do
+                local okz = (z2 == z)
+                if not okz then
+                    local s2 = cell2:getGridSquare(t[1], t[2], z2)
+                    if s2 then
+                        local fl = nil
+                        pcall(function() fl = s2:getFloor() end)
+                        okz = fl ~= nil
+                    end
+                end
+                if okz then EZ.addTile(zone.id, t[1], t[2], z2); painted = painted + 1 end
+            end
+        end
         showZone(playerNum, zone)
-        halo(pl, "Auto-detected " .. #tiles .. " tiles (" .. mode .. "). Total: " .. EZ.tileCount(zone) .. ". Smooth with Add tile / 5x5 / Cutout; repeat on other floors + basement.")
+        halo(pl, "Auto-detected " .. #tiles .. " footprint tiles -> " .. painted .. " painted across floors incl. basement (" .. mode .. "). Total: " .. EZ.tileCount(zone) .. ". Smooth with Add tile / 5x5 / Cutout.")
         pcall(function() if EmpireBases and EmpireBases.syncKSToOurBase then EmpireBases.syncKSToOurBase(pl) end end)
     end)
 

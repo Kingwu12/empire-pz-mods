@@ -139,6 +139,14 @@ Events.OnGameStart.Add(function()
         -- ISCraftInputItems widget. Shim the live doors, keep the old ones as belt.
         shim("ISEntityBuildMenu", "onBuildEntity")      -- LIVE: world build-menu click -> place/consume
         shim("ISCraftInputItems", "updateContainers")   -- LIVE: craft window ingredient counting
+        -- v5: King's ACTUAL windows are the Neat Rocco suite -- Neat_Building and
+        -- Neat_Crafting replace the vanilla UIs entirely (telemetry: vanilla doors
+        -- installed-but-silent, tuning window +52 proved the source is alive).
+        -- Same getContainers chokepoint, the right classes this time:
+        shim("NB_BuildingPanel", "updateContainers")        -- Neat build menu counts
+        shim("NB_BuildingPanel", "createBuildIsoEntity")    -- Neat build place/consume
+        shim("NC_CraftLogicPanel", "updateContainers")      -- Neat craft-station logic
+        shim("NC_HandCraftPanel", "updateContainers")       -- Neat handcraft window
         print("[EmpireQoL] CraftFromBase v3 active (late-installed): cache + proximity fallback (r=" .. RADIUS .. ")")
     end
     Events.OnTick.Add(install)
