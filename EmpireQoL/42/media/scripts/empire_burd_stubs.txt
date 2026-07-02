@@ -1,0 +1,12 @@
+module BurdJournals
+{
+    imports { Base }
+    item BlankSurvivalJournal { DisplayCategory = Literature, Type = Literature, DisplayName = Journal (removed mod), Icon = None, Weight = 0.2, }
+    item BlankSurvivalJournal_Worn { DisplayCategory = Literature, Type = Literature, DisplayName = Journal (removed mod), Icon = None, Weight = 0.2, }
+    item BlankSurvivalJournal_Bloody { DisplayCategory = Literature, Type = Literature, DisplayName = Journal (removed mod), Icon = None, Weight = 0.2, }
+    item CursedJournal { DisplayCategory = Literature, Type = Literature, DisplayName = Journal (removed mod), Icon = None, Weight = 0.2, }
+    item YuletideJournal { DisplayCategory = Literature, Type = Literature, DisplayName = Journal (removed mod), Icon = None, Weight = 0.2, }
+    item FilledSurvivalJournal { DisplayCategory = Literature, Type = Literature, DisplayName = Journal (removed mod), Icon = None, Weight = 0.2, }
+    item FilledSurvivalJournal_Worn { DisplayCategory = Literature, Type = Literature, DisplayName = Journal (removed mod), Icon = None, Weight = 0.2, }
+    item FilledSurvivalJournal_Bloody { DisplayCategory = Literature, Type = Literature, DisplayName = Journal (removed mod), Icon = None, Weight = 0.2, }
+}
