@@ -76,6 +76,11 @@ local function fetchForPart(playerObj, part)
     if not playerObj or not part then return end
     local playerInv = playerObj:getInventory()
     local fetched = {}
+    -- telemetry: prove whether the storage source is live at fetch time
+    pcall(function()
+        local src = EmpireQoL_BaseContainers(playerObj)
+        print("[EmpireQoL] MechanicFromBase: storage source = " .. tostring(src and #src or 0) .. " containers")
+    end)
     -- 1) the replacement part item itself (first acceptable type found in storage),
     --    only when the slot is empty (installing) and you don't already carry one
     pcall(function()

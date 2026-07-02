@@ -133,6 +133,12 @@ Events.OnGameStart.Add(function()
         shim("ISHandCraftPanel", "updateContainers")    -- handcraft panel counts
         shim("ISHandCraftPanel", "setSeeAllRecipe")     -- recipe list refresh path
         shim("ISCraftLogicPanel", "updateContainers")   -- crafting-station logic panel
+        -- v4: the sites ABOVE never fired in live play (telemetry-proven) -- the real
+        -- flows route through these two: world right-click Build clicks land in
+        -- ISEntityBuildMenu.onBuildEntity, and craft windows count via the
+        -- ISCraftInputItems widget. Shim the live doors, keep the old ones as belt.
+        shim("ISEntityBuildMenu", "onBuildEntity")      -- LIVE: world build-menu click -> place/consume
+        shim("ISCraftInputItems", "updateContainers")   -- LIVE: craft window ingredient counting
         print("[EmpireQoL] CraftFromBase v3 active (late-installed): cache + proximity fallback (r=" .. RADIUS .. ")")
     end
     Events.OnTick.Add(install)
