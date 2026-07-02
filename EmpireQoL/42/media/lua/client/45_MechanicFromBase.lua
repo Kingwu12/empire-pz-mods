@@ -8,20 +8,38 @@
 -- sees them in your inventory and enables its options; consume works untouched.
 -- Leftover tools go back on the shelves with the next Numpad3 -- that's the sorter's job.
 
+-- fixing scripts sometimes name items without a module ("Screws"): try as-is, then Base.
+local function typeVariants(ft)
+    if ft:find("%.", 1, false) then return { ft } end
+    return { "Base." .. ft, ft }
+end
+
 local function firstFromStorage(fullType)
     local conts = nil
     pcall(function() conts = EmpireQoL_BaseContainers(nil) end)
     if not conts then return nil, nil end
-    for _, c in ipairs(conts) do
-        local it = nil
-        pcall(function() it = c:getFirstTypeRecurse(fullType) end)
-        if it then
-            local broken = false
-            pcall(function() broken = it:isBroken() end)
-            if not broken then return it, c end
+    for _, v in ipairs(typeVariants(fullType)) do
+        for _, c in ipairs(conts) do
+            local it = nil
+            pcall(function() it = c:getFirstTypeRecurse(v) end)
+            if it then
+                local broken = false
+                pcall(function() broken = it:isBroken() end)
+                if not broken then return it, c end
+            end
         end
     end
     return nil, nil
+end
+
+local function countTypeInInv(inv, fullType)
+    local n = 0
+    for _, v in ipairs(typeVariants(fullType)) do
+        local c = 0
+        pcall(function() c = inv:getCountTypeRecurse(v) or 0 end)
+        if c > n then n = c end
+    end
+    return n
 end
 
 local function firstTagFromStorage(tag)
@@ -112,6 +130,45 @@ local function fetchForPart(playerObj, part)
             end
         end)
     end
+    -- 3) REPAIR ("increase part health") materials: the Repair submenu is built from
+    --    the Fixing system -- FixingManager.getFixes(partItem) -> fixings -> fixers.
+    --    Fetch each fixer item (up to its required count, clamped) plus the fixing's
+    --    global tool (e.g. blowtorch) so the repair options light up.
+    pcall(function()
+        local invItem = part:getInventoryItem()
+        if not invItem then return end
+        local fixingList = FixingManager.getFixes(invItem)
+        if not fixingList or fixingList:isEmpty() then return end
+        for i = 0, fixingList:size() - 1 do
+            local fixing = fixingList:get(i)
+            pcall(function()
+                local gi = fixing:getGlobalItem()
+                if gi then
+                    local gt = nil
+                    pcall(function() gt = gi:getFixerName() end)
+                    if gt and gt ~= "" then fetchToken(gt, playerInv, fetched) end
+                end
+            end)
+            local fixers = nil
+            pcall(function() fixers = fixing:getFixers() end)
+            if fixers then
+                for j = 0, fixers:size() - 1 do
+                    local fixer = fixers:get(j)
+                    local ft, cnt = nil, 1
+                    pcall(function() ft = fixer:getFixerName() end)
+                    pcall(function() cnt = fixer:getNumberOfItems() or 1 end)
+                    if ft and ft ~= "" then
+                        if cnt > 4 then cnt = 4 end
+                        while countTypeInInv(playerInv, ft) < cnt do
+                            local it2, from2 = firstFromStorage(ft)
+                            if not it2 then break end
+                            if not moveToPlayer(it2, from2, playerInv, fetched) then break end
+                        end
+                    end
+                end
+            end
+        end
+    end)
     if #fetched > 0 then
         pcall(function()
             HaloTextHelper.addTextWithArrow(playerObj, "Quartermaster: " .. table.concat(fetched, ", "), "[br/]", false, HaloTextHelper.getColorGreen())
@@ -141,6 +198,41 @@ local function installMechShim()
     print("[EmpireQoL] MechanicFromBase active (late-installed): right-click a part -> quartermaster hands you part + tools")
 end
 
+-- ATA / tsarslib TUNING window: it keeps its own container list (containerListLua,
+-- inventory + open loot windows only). Append base storage after its own gather, so
+-- HasAllRequiredItems and the ingredient panel see the whole base. Same source,
+-- same dedup, prints what it added.
+local function installTuningShim()
+    if not (ISVehicleTuning2 and type(ISVehicleTuning2.getContainers) == "function") then
+        print("[EmpireQoL] TuningFromBase: ISVehicleTuning2 not present -- skipped")
+        return
+    end
+    local orig = ISVehicleTuning2.getContainers
+    ISVehicleTuning2.getContainers = function(self, ...)
+        local r = orig(self, ...)
+        pcall(function()
+            if not self.containerListLua then return end
+            local extra = EmpireQoL_BaseContainers(self.character)
+            if not extra then
+                print("[EmpireQoL] TuningFromBase: storage source = 0 containers")
+                return
+            end
+            local seen, added = {}, 0
+            for _, c in ipairs(self.containerListLua) do seen[c] = true end
+            for _, c in ipairs(extra) do
+                if c and not seen[c] then
+                    self.containerListLua[#self.containerListLua + 1] = c
+                    seen[c] = true
+                    added = added + 1
+                end
+            end
+            print("[EmpireQoL] TuningFromBase: +" .. added .. " storage containers visible to tuning window")
+        end)
+        return r
+    end
+    print("[EmpireQoL] TuningFromBase active: ATA tuning window sees base storage")
+end
+
 Events.OnGameStart.Add(function()
     local installed = false
     local function install()
@@ -148,6 +240,7 @@ Events.OnGameStart.Add(function()
         installed = true
         Events.OnTick.Remove(install)
         installMechShim()
+        installTuningShim()
     end
     Events.OnTick.Add(install)
 end)
