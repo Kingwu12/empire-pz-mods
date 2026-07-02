@@ -255,6 +255,15 @@ Events.OnGameStart.Add(function()
             local prev = nb.createBuildIsoEntity
             nb.createBuildIsoEntity = function(self, ...)
                 pcall(function() fetchForBuild(self) end)
+                -- re-resolve: the logic picked its input items BEFORE the fetch (they
+                -- pointed at far base shelves and fail range checks at action time).
+                -- Refreshing containers makes selection land on the items now carried.
+                pcall(function() if self.updateContainers then self:updateContainers() end end)
+                pcall(function()
+                    if self.logic and self.logic.canPerformCurrentRecipe then
+                        print("[EmpireQoL] build QM: post-fetch canPerform = " .. tostring(self.logic:canPerformCurrentRecipe()))
+                    end
+                end)
                 return prev(self, ...)
             end
             print("[EmpireQoL] CraftFromBase: build quartermaster armed (tools + materials fetched from base on build click)")
@@ -268,6 +277,18 @@ Events.OnGameStart.Add(function()
                 pcall(function()
                     local rec = self.logic and self.logic:getRecipe()
                     if rec then EmpireQoL_FetchForRecipe(self.player, rec, craftTimes or 1) end
+                end)
+                -- re-resolve selection onto the freshly-carried items (see build note)
+                pcall(function()
+                    if self.logic then
+                        local list = ISInventoryPaneContextMenu.getContainers(self.player)
+                        self.logic:setContainers(augment(list))
+                    end
+                end)
+                pcall(function()
+                    if self.logic and self.logic.canPerformCurrentRecipe then
+                        print("[EmpireQoL] craft QM: post-fetch canPerform = " .. tostring(self.logic:canPerformCurrentRecipe()))
+                    end
                 end)
                 return prevSH(self, force, craftTimes, ...)
             end
