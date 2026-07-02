@@ -1510,9 +1510,81 @@ local function smartSort(player, opts)
     for _, st in ipairs(stores) do
         if st.compost then compostBins[#compostBins+1] = st end
     end
+    -- v19.10: NEVER trust hasRoomFor on composters. A live composter reported
+    -- cached weight -1.0 with 444 items inside (java dirty-cache sentinel);
+    -- hasRoomFor said yes forever and every scrap of rot funneled into that one
+    -- black-hole bin while the rest sat empty. Compute weights ourselves and
+    -- keep a running cache so routing stays O(items).
+    local function itemW(it)
+        local w = 0.1
+        pcall(function() w = it:getActualWeight() or 0.1 end)
+        if w < 0 then w = 0.1 end
+        return w
+    end
+    local function binCap(cb)
+        local cap = 39
+        pcall(function() cap = cb.c:getCapacity() or 39 end)
+        return cap
+    end
+    local usedCache = {}
+    for _, cb in ipairs(compostBins) do
+        local sum = 0
+        pcall(function()
+            local its = cb.c:getItems()
+            for i = 0, its:size() - 1 do sum = sum + itemW(its:get(i)) end
+        end)
+        usedCache[cb] = sum
+    end
+    -- bin with the MOST real free space that truly fits the item
+    local function bestBinFor(it, exclude)
+        local best, bestFree = nil, 0
+        local w = itemW(it)
+        for _, cb in ipairs(compostBins) do
+            if cb ~= exclude then
+                local free = binCap(cb) - usedCache[cb]
+                if free >= w and free > bestFree then best, bestFree = cb, free end
+            end
+        end
+        return best
+    end
+    -- REBALANCE: drain over-capacity bins (the black hole) into bins with room
+    local rotRebalanced = 0
+    for _, cb in ipairs(compostBins) do
+        local cap = binCap(cb)
+        if usedCache[cb] > cap then
+            local snap = {}
+            pcall(function()
+                local its = cb.c:getItems()
+                for i = 0, its:size() - 1 do snap[#snap+1] = its:get(i) end
+            end)
+            for _, it in ipairs(snap) do
+                if usedCache[cb] <= cap then break end
+                local dst = bestBinFor(it, cb)
+                if not dst then break end
+                local ok = pcall(function() dst.c:addItem(it); cb.c:Remove(it) end)
+                if ok then
+                    local w = itemW(it)
+                    usedCache[dst] = usedCache[dst] + w
+                    usedCache[cb] = usedCache[cb] - w
+                    rotRebalanced = rotRebalanced + 1
+                    touched[cb.c] = true; touched[dst.c] = true
+                end
+            end
+        end
+    end
+    if #compostBins > 0 then
+        local txt = ""
+        for _, cb in ipairs(compostBins) do
+            txt = txt .. string.format(" %.1f/%.0f", usedCache[cb], binCap(cb))
+        end
+        print("[EmpireSort DIAG] compost bins=" .. #compostBins .. " (real used/cap):" .. txt
+            .. (rotRebalanced > 0 and (" | rebalanced " .. rotRebalanced .. " out of over-full bins") or ""))
+    end
     -- SCOPE: only purge rotten food on a full tidy (empty-handed) or when you're actually
     -- depositing food. Dumping logs shouldn't make the sorter rummage every fridge for rot.
-    local doRotten = (not anyCarried) or activeCats.Perishable or activeCats.Frozen or activeCats.DryFood
+    -- v19.10: always purge rot. The old empty-handed/food-sort gate meant rot
+    -- lingered across every carry-sort, reading as "compost doesn't work".
+    local doRotten = true
     for _, st in ipairs(stores) do
         if doRotten and not st.compost then   -- never pull rotten OUT of any compost home
             local its = st.c:getItems()
@@ -1521,21 +1593,19 @@ local function smartSort(player, opts)
             for _, it in ipairs(snap) do
                 if isRottenItem(it) and not isProtected(it) then
                     local placed = false
-                    -- 1) try to move it INTO a compost bin that has room
-                    for _, cb in ipairs(compostBins) do
-                        local fits = false
-                        pcall(function() fits = cb.c:hasRoomFor(player, it) end)
-                        if fits then
-                            local ok = pcall(function()
-                                cb.c:addItem(it)
-                                st.c:Remove(it)
-                            end)
-                            if ok then
-                                placed = true
-                                rottenComposted = rottenComposted + 1
-                                touched[st.c] = true; touched[cb.c] = true
-                                break
-                            end
+                    -- 1) route INTO the compost bin with the most REAL room
+                    --    (computed weights; the cached java weight lied -- v19.10)
+                    local cb = bestBinFor(it, nil)
+                    if cb then
+                        local ok = pcall(function()
+                            cb.c:addItem(it)
+                            st.c:Remove(it)
+                        end)
+                        if ok then
+                            placed = true
+                            usedCache[cb] = usedCache[cb] + itemW(it)
+                            rottenComposted = rottenComposted + 1
+                            touched[st.c] = true; touched[cb.c] = true
                         end
                     end
                     -- 2) no compost bin (or all full) -> drop on the floor beside the container
@@ -1570,25 +1640,24 @@ local function smartSort(player, opts)
             -- purged TO the floor deliberately). Ground rot now files into the first
             -- compost home with room; no bin or no room -> it stays put (old behavior --
             -- and PASS A's purged pile can't loop back, purge implies the bins are full).
-            for _, cb in ipairs(compostBins) do
-                local fits = false
-                pcall(function() fits = cb.c:isItemAllowed(it) and cb.c:hasRoomFor(player, it) end)
-                if fits then
-                    local ok = pcall(function()
-                        sq:transmitRemoveItemFromSquare(wo)
-                        wo:removeFromWorld()
-                        wo:removeFromSquare()
-                        wo:setSquare(nil)
-                        it:setWorldItem(nil)
-                        it:setJobDelta(0.0)
-                        cb.c:addItem(it)
-                    end)
-                    if ok then
-                        floorSorted = floorSorted + 1
-                        rottenComposted = rottenComposted + 1
-                        touched[cb.c] = true
-                        break
-                    end
+            local cb = bestBinFor(it, nil)
+            local allowed = false
+            if cb then pcall(function() allowed = cb.c:isItemAllowed(it) end) end
+            if cb and allowed then
+                local ok = pcall(function()
+                    sq:transmitRemoveItemFromSquare(wo)
+                    wo:removeFromWorld()
+                    wo:removeFromSquare()
+                    wo:setSquare(nil)
+                    it:setWorldItem(nil)
+                    it:setJobDelta(0.0)
+                    cb.c:addItem(it)
+                end)
+                if ok then
+                    floorSorted = floorSorted + 1
+                    rottenComposted = rottenComposted + 1
+                    usedCache[cb] = usedCache[cb] + itemW(it)
+                    touched[cb.c] = true
                 end
             end
         elseif it and not isProtected(it)
