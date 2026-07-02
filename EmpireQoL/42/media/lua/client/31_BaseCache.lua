@@ -35,13 +35,22 @@ local function enumerate(base, playerObj)
     local cell = getCell()
     if not cell then return idx end
     local pz = sq:getZ()
-    local spread = (EmpireBases and EmpireBases.FLOOR_SPREAD) or 0
+    -- painted zones carry their exact floor span (auto-detect stamps basement +
+    -- upper floors), so sweep zmin..zmax; legacy rects fall back to +/- spread.
+    local zlo, zhi
+    if base.zmin or base.zmax then
+        zlo = math.min(base.zmin or pz, pz)
+        zhi = math.max(base.zmax or pz, pz)
+    else
+        local spread = (EmpireBases and EmpireBases.FLOOR_SPREAD) or 0
+        zlo, zhi = pz - spread, pz + spread
+    end
     local x1 = math.min(base.x1, base.x2)
     local x2 = math.max(base.x1, base.x2)
     local y1 = math.min(base.y1, base.y2)
     local y2 = math.max(base.y1, base.y2)
     local seen = {}
-    for z = pz - spread, pz + spread do
+    for z = zlo, zhi do
         for x = x1, x2 do
             for y = y1, y2 do
                 local s = cell:getGridSquare(x, y, z)

@@ -92,6 +92,99 @@ local function augment(list)
     return list
 end
 
+-- BUILD QUARTERMASTER: Neat resolves build TOOLS strictly from the player's own
+-- inventory (getAllTypeEvalRecurse on inventory), and consume is only reliable with
+-- everything on you. So on build click, BEFORE the ghost cursor is created, pull the
+-- selected recipe's missing tools AND input materials from base storage into the
+-- player's inventory. Instant move, same pattern as the mechanics quartermaster.
+local function fetchForBuild(panel)
+    local playerObj = panel and panel.player
+    if not playerObj then return end
+    local recipe = nil
+    pcall(function() recipe = panel.logic and panel.logic:getRecipe() end)
+    if not recipe then return end
+    local inv = playerObj:getInventory()
+    local src = EmpireQoL_BaseContainers(playerObj)
+    if not src or #src == 0 then return end
+    local fetched = {}
+
+    local function haveCount(ft)
+        local n = 0
+        pcall(function()
+            local res = inv:getAllTypeRecurse(ft)
+            n = res and res:size() or 0
+        end)
+        return n
+    end
+    local function pullOne(ft)
+        for _, c in ipairs(src) do
+            local got = nil
+            pcall(function()
+                local items = c:getItems()
+                for i = 0, items:size() - 1 do
+                    local it = items:get(i)
+                    if it and it:getFullType() == ft then got = it; break end
+                end
+            end)
+            if got then
+                local ok = pcall(function() c:Remove(got); inv:addItem(got) end)
+                if ok then
+                    local nm = ft
+                    pcall(function() nm = got:getDisplayName() end)
+                    fetched[#fetched + 1] = nm
+                    return true
+                end
+            end
+        end
+        return false
+    end
+    local function ensureInput(inputScript)
+        if not inputScript then return end
+        local possible = nil
+        pcall(function() possible = inputScript:getPossibleInputItems() end)
+        if not possible or possible:size() == 0 then return end
+        local need = nil
+        pcall(function() need = inputScript:getIntAmount() end)
+        if (not need) or need < 1 then pcall(function() need = inputScript:getAmount() end) end
+        if (not need) or need < 1 then need = 1 end
+        local have = 0
+        local types = {}
+        for m = 0, possible:size() - 1 do
+            local ft = nil
+            pcall(function() ft = possible:get(m):getFullName() end)
+            if ft then types[#types + 1] = ft; have = have + haveCount(ft) end
+        end
+        local missing = need - have
+        while missing > 0 do
+            local pulled = false
+            for _, ft in ipairs(types) do
+                if pullOne(ft) then pulled = true; break end
+            end
+            if not pulled then break end
+            missing = missing - 1
+        end
+    end
+    pcall(function() ensureInput(recipe:getToolBoth()) end)
+    pcall(function() ensureInput(recipe:getToolRight()) end)
+    pcall(function() ensureInput(recipe:getToolLeft()) end)
+    pcall(function()
+        local ins = recipe:getInputs()
+        for i = 0, ins:size() - 1 do
+            local input = ins:get(i)
+            local auto = false
+            pcall(function() auto = input:isAutomationOnly() end)
+            if not auto then ensureInput(input) end
+        end
+    end)
+    if #fetched > 0 then
+        pcall(function()
+            HaloTextHelper.addTextWithArrow(playerObj, "Quartermaster: " .. table.concat(fetched, ", "), "[br/]", true, HaloTextHelper.getColorGreen())
+        end)
+        print("[EmpireQoL] CraftFromBase: build quartermaster fetched " .. #fetched .. " item(s) to player")
+        pcall(function() if EmpireBaseCache and EmpireBaseCache.invalidate then EmpireBaseCache.invalidate() end end)
+    end
+end
+
 local function shim(klassName, methodName)
     local k = _G[klassName]
     if not k or type(k[methodName]) ~= "function" then
@@ -147,6 +240,16 @@ Events.OnGameStart.Add(function()
         shim("NB_BuildingPanel", "createBuildIsoEntity")    -- Neat build place/consume
         shim("NC_CraftLogicPanel", "updateContainers")      -- Neat craft-station logic
         shim("NC_HandCraftPanel", "updateContainers")       -- Neat handcraft window
+        -- v6: quartermaster fetch runs FIRST on build click, then the shimmed original
+        local nb = _G["NB_BuildingPanel"]
+        if nb and type(nb.createBuildIsoEntity) == "function" then
+            local prev = nb.createBuildIsoEntity
+            nb.createBuildIsoEntity = function(self, ...)
+                pcall(function() fetchForBuild(self) end)
+                return prev(self, ...)
+            end
+            print("[EmpireQoL] CraftFromBase: build quartermaster armed (tools + materials fetched from base on build click)")
+        end
         print("[EmpireQoL] CraftFromBase v3 active (late-installed): cache + proximity fallback (r=" .. RADIUS .. ")")
     end
     Events.OnTick.Add(install)

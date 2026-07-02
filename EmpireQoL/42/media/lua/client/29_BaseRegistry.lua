@@ -164,6 +164,14 @@ function EmpireBases.activeBase(playerObj)
     local sq = playerObj:getCurrentSquare()
     if not sq then return nil end
     local px, py = sq:getX(), sq:getY()
+    -- LIVE painted Empire Zone base wins. The stored list is seeded only when empty,
+    -- so a stale rect from an old manual define could shadow a zone painted later --
+    -- that broke the base cache (activeBase nil -> proximity fallback only).
+    local zb = EmpireBases.getEmpireZoneBase()
+    if zb and px >= zb.x1 and px <= zb.x2 and py >= zb.y1 and py <= zb.y2 then
+        zb.name = "Main"
+        return zb
+    end
     for _, b in ipairs(EmpireBases.list()) do
         if inRect(px, py, b) then return b end
     end
