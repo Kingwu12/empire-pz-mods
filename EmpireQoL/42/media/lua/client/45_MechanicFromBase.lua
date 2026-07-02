@@ -242,6 +242,88 @@ local function installTuningShim()
     print("[EmpireQoL] TuningFromBase active: ATA tuning window sees base storage")
 end
 
+-- TUNING QUARTERMASTER: the window counts materials against base storage (shim
+-- above), but onInstallPart fetches through ISInventoryTransferAction, which
+-- range-validates the source container -- far shelves fail SILENTLY and the
+-- install starves. So on install click, BEFORE the mod's own transfer pass,
+-- instant-pull the recipe's use+tools items (fullType or tag match) from base
+-- storage into the player. The mod's transferItems then finds them already on
+-- the player and skips its transfers.
+local function installTuningQuartermaster()
+    if not (ISVehicleTuning2 and type(ISVehicleTuning2.onInstallPart) == "function") then
+        print("[EmpireQoL] TuningQM: ISVehicleTuning2.onInstallPart not found -- skipped")
+        return
+    end
+    local function tagOf(itemTag)
+        local t = nil
+        if itemTag then pcall(function() t = ItemTag.get(ResourceLocation.of(itemTag)) end) end
+        return t
+    end
+    local function pullList(player, list, fetched)
+        if not list then return end
+        local inv = player:getInventory()
+        local src = EmpireQoL_BaseContainers(player)
+        if not src or #src == 0 then return end
+        for _, req in pairs(list) do
+            local fullType, need = req.fullType, req.count or 1
+            local tagObj = tagOf(req.itemTag)
+            local have = 0
+            if fullType then pcall(function() have = inv:getAllTypeRecurse(fullType):size() end) end
+            if have == 0 and tagObj then pcall(function() have = inv:getAllTag(tagObj):size() end) end
+            local missing = need - have
+            while missing > 0 do
+                local got, from = nil, nil
+                for _, c in ipairs(src) do
+                    pcall(function()
+                        local items = c:getItems()
+                        for i = 0, items:size() - 1 do
+                            local it = items:get(i)
+                            if it then
+                                local ok = false
+                                if fullType then pcall(function() ok = it:getFullType() == fullType end) end
+                                if not ok and tagObj then pcall(function() ok = it:hasTag(tagObj) end) end
+                                if ok then got = it; from = c; break end
+                            end
+                        end
+                    end)
+                    if got then break end
+                end
+                if not got then break end
+                local ok2 = pcall(function() from:Remove(got); inv:addItem(got) end)
+                if not ok2 then break end
+                local nm = fullType or req.itemTag or "?"
+                pcall(function() nm = got:getDisplayName() end)
+                fetched[#fetched + 1] = nm
+                missing = missing - 1
+            end
+        end
+    end
+    local prev = ISVehicleTuning2.onInstallPart
+    ISVehicleTuning2.onInstallPart = function(self, button, ...)
+        pcall(function()
+            local player = self.character
+            local box = self.getRecipeListBox and self:getRecipeListBox()
+            local RecipeItem = box and box.items and box.items[box.selected] and box.items[box.selected].item
+            if player and RecipeItem then
+                local fetched = {}
+                pullList(player, RecipeItem.use, fetched)
+                pullList(player, RecipeItem.tools, fetched)
+                if #fetched > 0 then
+                    pcall(function()
+                        HaloTextHelper.addTextWithArrow(player, "Quartermaster: " .. table.concat(fetched, ", "), "[br/]", true, HaloTextHelper.getColorGreen())
+                    end)
+                    print("[EmpireQoL] TuningQM: quartermaster fetched " .. #fetched .. " item(s) for tuning install")
+                    pcall(function() if EmpireBaseCache and EmpireBaseCache.invalidate then EmpireBaseCache.invalidate() end end)
+                else
+                    print("[EmpireQoL] TuningQM: install click, nothing to fetch (already carried or not in base)")
+                end
+            end
+        end)
+        return prev(self, button, ...)
+    end
+    print("[EmpireQoL] TuningQM: install-click quartermaster armed (ISVehicleTuning2.onInstallPart)")
+end
+
 Events.OnGameStart.Add(function()
     local installed = false
     local function install()
@@ -250,6 +332,7 @@ Events.OnGameStart.Add(function()
         Events.OnTick.Remove(install)
         installMechShim()
         installTuningShim()
+        installTuningQuartermaster()
     end
     Events.OnTick.Add(install)
 end)
