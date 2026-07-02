@@ -1526,6 +1526,24 @@ local function smartSort(player, opts)
         pcall(function() cap = cb.c:getCapacity() or 39 end)
         return cap
     end
+    -- v19.11: corrupt weight sanitizer. A live bin summed 22,132,612.6 weight
+    -- from rot items with broken actual weights (UI shows negative). Repair any
+    -- impossible weight (NaN / negative / heavier than a watermelon) to 0.3.
+    local rotSanitized = 0
+    local function sanitizeWeight(it)
+        local w = nil
+        pcall(function() w = it:getActualWeight() end)
+        if w == nil or w ~= w or w < 0 or w > 5 then
+            local ok = pcall(function() it:setActualWeight(0.3) end)
+            if ok then rotSanitized = rotSanitized + 1 end
+        end
+    end
+    for _, cb in ipairs(compostBins) do
+        pcall(function()
+            local its = cb.c:getItems()
+            for i = 0, its:size() - 1 do sanitizeWeight(its:get(i)) end
+        end)
+    end
     local usedCache = {}
     for _, cb in ipairs(compostBins) do
         local sum = 0
@@ -1578,7 +1596,8 @@ local function smartSort(player, opts)
             txt = txt .. string.format(" %.1f/%.0f", usedCache[cb], binCap(cb))
         end
         print("[EmpireSort DIAG] compost bins=" .. #compostBins .. " (real used/cap):" .. txt
-            .. (rotRebalanced > 0 and (" | rebalanced " .. rotRebalanced .. " out of over-full bins") or ""))
+            .. (rotRebalanced > 0 and (" | rebalanced " .. rotRebalanced .. " out of over-full bins") or "")
+            .. (rotSanitized > 0 and (" | sanitized " .. rotSanitized .. " corrupt item weight(s)") or ""))
     end
     -- SCOPE: only purge rotten food on a full tidy (empty-handed) or when you're actually
     -- depositing food. Dumping logs shouldn't make the sorter rummage every fridge for rot.
@@ -1593,6 +1612,7 @@ local function smartSort(player, opts)
             for _, it in ipairs(snap) do
                 if isRottenItem(it) and not isProtected(it) then
                     local placed = false
+                    sanitizeWeight(it)  -- v19.11: repair corrupt weight before weighing
                     -- 1) route INTO the compost bin with the most REAL room
                     --    (computed weights; the cached java weight lied -- v19.10)
                     local cb = bestBinFor(it, nil)
