@@ -108,29 +108,12 @@ local function onFill(player, context, worldobjects)
     local sub = ISContextMenu:getNew(context)
     context:addSubMenu(opt, sub)
 
-    -- BASE: pick two corners -> rectangle base, highlighted, and KS follows it
-    if not basePending then
-        sub:addOption("Define base: corner 1 here", pl, function()
-            basePending = { x = x, y = y, z = z }
-            halo(pl, "Base corner 1 set - right-click the opposite corner.")
-        end)
-    else
-        sub:addOption("Define base: FINISH rectangle here", pl, function()
-            local c = basePending; basePending = nil
-            local zone = ensureBaseZone()
-            local ax1, ax2 = math.min(c.x, x), math.max(c.x, x)
-            local ay1, ay2 = math.min(c.y, y), math.max(c.y, y)
-            for ax = ax1, ax2 do for ay = ay1, ay2 do EZ.addTile(zone.id, ax, ay, z) end end
-            showZone(playerNum, zone)
-            halo(pl, "Base set: " .. (ax2 - ax1 + 1) .. "x" .. (ay2 - ay1 + 1) .. " (this floor)")
-            pcall(function() if EmpireBases and EmpireBases.syncKSToOurBase then EmpireBases.syncKSToOurBase(pl) end end)
-        end)
-        sub:addOption("Define base: cancel", pl, function() basePending = nil; halo(pl, "Cancelled.") end)
-    end
+    -- MINIMAL MENU (King's directive): the smart define does the heavy lifting;
+    -- everything else is patch / trim / verify / reset. The room, building,
+    -- two-corner and per-type painters were clutter and are gone -- existing zone
+    -- DATA of other types still works, only their paint options were removed.
 
-    -- BASE: AUTO-DETECT the walled area around the clicked tile in one click.
-    -- Fill this floor, paint every reached tile into the base zone, highlight it.
-    -- Run it again on other floors (and in the basement) to add them the same way.
+    -- 1) THE smart define: flood-fill the walled area, stamp every real floor
     sub:addOption("AUTO-DETECT base here (walled area, all floors + basement)", pl, function()
         local tiles, n = floodDetect(sq, true)
         local mode = "doors passed"
@@ -139,14 +122,10 @@ local function onFill(player, context, worldobjects)
             mode = "strict -- fill leaked through an open gate/door, so doors blocked this run"
         end
         if not tiles then
-            halo(pl, "Area not enclosed (fill escaped even with doors blocked). Close the perimeter and retry, or use corners/rooms.")
+            halo(pl, "Area not enclosed (fill escaped even with doors blocked). Close the perimeter and retry.")
             return
         end
         local zone = ensureBaseZone()
-        -- stamp the detected footprint on EVERY level that really exists there:
-        -- BASEMENT_REACH down + FLOOR_SPREAD up (registry constants). A level counts
-        -- when the square exists and has a real floor -- basements and upper storeys
-        -- join automatically, open sky above the yard doesn't.
         local down = (EmpireBases and EmpireBases.BASEMENT_REACH) or 6
         local up   = (EmpireBases and EmpireBases.FLOOR_SPREAD) or 2
         local cell2 = getCell()
@@ -166,78 +145,26 @@ local function onFill(player, context, worldobjects)
             end
         end
         showZone(playerNum, zone)
-        halo(pl, "Auto-detected " .. #tiles .. " footprint tiles -> " .. painted .. " painted across floors incl. basement (" .. mode .. "). Total: " .. EZ.tileCount(zone) .. ". Smooth with Add tile / 5x5 / Cutout.")
+        halo(pl, "Auto-detected " .. #tiles .. " footprint tiles -> " .. painted .. " painted incl. basement (" .. mode .. "). Total: " .. EZ.tileCount(zone) .. ".")
         pcall(function() if EmpireBases and EmpireBases.syncKSToOurBase then EmpireBases.syncKSToOurBase(pl) end end)
     end)
 
-    -- BASE: add a whole ROOM in one click (exact irregular footprint, this floor).
-    -- Uses PZ room detection: walk the room's def bounding box, keep only squares whose
-    -- room IS this room. Unions into the single base zone (non-destructive).
-    local room = nil; pcall(function() room = sq.getRoom and sq:getRoom() or nil end)
-    local roomDef = nil; if room then pcall(function() roomDef = room:getRoomDef() end) end
-    if roomDef then
-        sub:addOption("Add this whole ROOM to base", pl, function()
-            local zone = ensureBaseZone()
-            local cell = getCell()
-            local rx1, ry1, rx2, ry2 = roomDef:getX(), roomDef:getY(), roomDef:getX2(), roomDef:getY2()
-            local n = 0
-            for ax = rx1, rx2 do for ay = ry1, ry2 do
-                local s2 = cell and cell:getGridSquare(ax, ay, z)
-                local r2 = nil; if s2 then pcall(function() r2 = s2.getRoom and s2:getRoom() or nil end) end
-                if r2 and r2 == room then EZ.addTile(zone.id, ax, ay, z); n = n + 1 end
-            end end
-            showZone(playerNum, zone)
-            halo(pl, "Added room: " .. n .. " tiles (" .. EZ.tileCount(zone) .. " total)")
-            pcall(function() if EmpireBases and EmpireBases.syncKSToOurBase then EmpireBases.syncKSToOurBase(pl) end end)
-        end)
-    end
+    -- 2) patch a hole the fill missed (tree shadows etc.)
+    sub:addOption("Patch: add 5x5 here", pl, function()
+        local zone = ensureBaseZone()
+        EZ.addBlock(zone.id, x, y, z, 2)
+        showZone(playerNum, zone)
+        halo(pl, "Patched 5x5 (" .. EZ.tileCount(zone) .. " tiles total)")
+    end)
 
-    -- BASE: add the whole BUILDING (this floor) in one click. Union the bounding boxes
-    -- of every room def, then keep only squares that belong to THIS building's ID -- so
-    -- the exact multi-room footprint on this floor is added, no neighbours bleed in.
-    -- (Multi-floor: repeat this on each floor, same as the rectangle flow.)
-    local building = nil; pcall(function() building = sq.getBuilding and sq:getBuilding() or nil end)
-    if building then
-        sub:addOption("Add this whole BUILDING to base (this floor)", pl, function()
-            local zone = ensureBaseZone()
-            local cell = getCell()
-            local bid = nil; pcall(function() bid = building:getID() end)
-            local bdef = nil; pcall(function() bdef = building.getDef and building:getDef() or nil end)
-            local x1, y1, x2, y2
-            if bdef and bdef.getRooms then
-                local rooms = bdef:getRooms()
-                for i = 0, rooms:size() - 1 do
-                    local rd = rooms:get(i)
-                    local a1, b1, a2, b2 = rd:getX(), rd:getY(), rd:getX2(), rd:getY2()
-                    x1 = x1 and math.min(x1, a1) or a1
-                    y1 = y1 and math.min(y1, b1) or b1
-                    x2 = x2 and math.max(x2, a2) or a2
-                    y2 = y2 and math.max(y2, b2) or b2
-                end
-            end
-            local n = 0
-            if x1 and bid then
-                for ax = x1, x2 do for ay = y1, y2 do
-                    local s2 = cell and cell:getGridSquare(ax, ay, z)
-                    local b2 = nil; if s2 then pcall(function() b2 = s2.getBuilding and s2:getBuilding() or nil end) end
-                    local id2 = nil; if b2 then pcall(function() id2 = b2:getID() end) end
-                    if id2 and id2 == bid then EZ.addTile(zone.id, ax, ay, z); n = n + 1 end
-                end end
-            end
-            showZone(playerNum, zone)
-            halo(pl, "Added building floor: " .. n .. " tiles (" .. EZ.tileCount(zone) .. " total)")
-            pcall(function() if EmpireBases and EmpireBases.syncKSToOurBase then EmpireBases.syncKSToOurBase(pl) end end)
-        end)
-    end
-
-    -- BASE: subtract a rectangle (carve a cutout, e.g. exclude a courtyard interior).
+    -- 3) trim: carve a rectangle out of the base
     if not subPending then
-        sub:addOption("Base cutout: corner 1 here", pl, function()
+        sub:addOption("Trim: cutout corner 1 here", pl, function()
             subPending = { x = x, y = y, z = z }
             halo(pl, "Cutout corner 1 set - right-click the opposite corner.")
         end)
     else
-        sub:addOption("Base cutout: FINISH rectangle here", pl, function()
+        sub:addOption("Trim: FINISH cutout here", pl, function()
             local c = subPending; subPending = nil
             local zone = ensureBaseZone()
             local ax1, ax2 = math.min(c.x, x), math.max(c.x, x)
@@ -247,39 +174,23 @@ local function onFill(player, context, worldobjects)
             halo(pl, "Cutout removed: " .. (ax2 - ax1 + 1) .. "x" .. (ay2 - ay1 + 1) .. " (" .. EZ.tileCount(zone) .. " left)")
             pcall(function() if EmpireBases and EmpireBases.syncKSToOurBase then EmpireBases.syncKSToOurBase(pl) end end)
         end)
-        sub:addOption("Base cutout: cancel", pl, function() subPending = nil; halo(pl, "Cancelled.") end)
+        sub:addOption("Trim: cancel", pl, function() subPending = nil; halo(pl, "Cancelled.") end)
     end
 
-    local here = EZ.zoneAt(x, y, z)
-    if here then
-        sub:addOption("Add this tile (" .. here.name .. ")", pl, function()
-            EZ.addTile(here.id, x, y, z); showZone(playerNum, here)
-            halo(pl, here.name .. ": " .. EZ.tileCount(here) .. " tiles")
-        end)
-        sub:addOption("Add 5x5 here (" .. here.name .. ")", pl, function()
-            EZ.addBlock(here.id, x, y, z, 2); showZone(playerNum, here)
-            halo(pl, here.name .. ": " .. EZ.tileCount(here) .. " tiles")
-        end)
-        sub:addOption("Remove this tile", pl, function()
-            EZ.removeTile(here.id, x, y, z); showZone(playerNum, here)
-            halo(pl, "Removed (" .. EZ.tileCount(here) .. " left)")
-        end)
-        sub:addOption("Show " .. here.name, pl, function() showZone(playerNum, here) end)
-        sub:addOption("Hide zones", pl, function() clearShown(playerNum) end)
-        sub:addOption("Delete " .. here.name, pl, function()
-            clearShown(playerNum); EZ.delete(here.id); halo(pl, "Zone deleted")
-        end)
-    else
-        for _, t in ipairs(EZ.TYPES) do
-            local ztype = t
-            sub:addOption("New " .. ztype .. " zone here", pl, function()
-                local id = EZ.newZone(ztype:sub(1,1):upper() .. ztype:sub(2) .. " " .. x .. "_" .. y, ztype)
-                EZ.addTile(id, x, y, z); showZone(playerNum, EZ.get(id))
-                halo(pl, "Started " .. ztype .. " zone (1 tile)")
-            end)
+    -- 4) verify
+    sub:addOption("Show base highlight", pl, function()
+        showZone(playerNum, ensureBaseZone())
+    end)
+    sub:addOption("Hide highlight", pl, function() clearShown(playerNum) end)
+
+    -- 5) reset
+    sub:addOption("Delete base zone (start over)", pl, function()
+        clearShown(playerNum)
+        for id, zz in pairs(EZ.all()) do
+            if zz.type == "base" then EZ.delete(zz.id or id) end
         end
-        sub:addOption("Hide zones", pl, function() clearShown(playerNum) end)
-    end
+        halo(pl, "Base zone deleted -- run AUTO-DETECT to redefine.")
+    end)
 end
 
 Events.OnFillWorldObjectContextMenu.Add(onFill)
