@@ -409,6 +409,14 @@ local function containerType(cont)
     return ctype
 end
 
+-- Corrupted items (e.g. food that lived through the stub incident) can carry NaN
+-- weight. NaN poisons every comparison silently AND hard-crashes Kahlua's
+-- string.format("%.1f"). Every weight read funnels through this: NaN/inf -> fallback.
+local function safeNum(x, fb)
+    if type(x) ~= "number" or x ~= x or x == math.huge or x == -math.huge then return fb end
+    return x
+end
+
 -- EFFECTIVE capacity -- what the game actually enforces and the UI displays.
 -- getCapacity() is only the BASE value; traits modify it (Organized = +30%,
 -- so a "50" crate really holds 65). Using base capacity made the sorter refuse
@@ -421,7 +429,7 @@ local function capOf(c, player)
     if (not ok) or (not mx) or mx <= 0 then
         pcall(function() mx = c:getCapacity() end)
     end
-    return mx or 0
+    return safeNum(mx or 0, 0)
 end
 local function isFreezer(ct)
     ct = (ct or ""):lower()
@@ -1029,7 +1037,7 @@ local function smartSort(player, opts)
     local function freeOf(c)
         local mx, cur = capOf(c, player), 0
         pcall(function() cur = c:getCapacityWeight() end)
-        return (mx or 0) - (cur or 0)
+        return (mx or 0) - safeNum(cur or 0, 0)
     end
     -- copy + sort emptiest-first so items SPREAD across same-category containers instead
     -- of cramming the first one to the brim. Never mutates the input list.
@@ -1147,6 +1155,7 @@ local function smartSort(player, opts)
     for _, st in ipairs(stores) do
         local mx, cur = capOf(st.c, player), 0
         pcall(function() cur = st.c:getCapacityWeight() end)
+        cur = safeNum(cur, 0)
         -- compost homes are never shed: their contents are rot mid-composting, and
         -- shedding would push it back onto the food shelves.
         if (not st.compost) and mx and mx > 0 and cur and cur > mx then
@@ -1283,8 +1292,10 @@ local function smartSort(player, opts)
             local ranged = false; pcall(function() ranged = w:isRanged() end)
             if not ranged then return end
             local at, mt = nil, nil
-            pcall(function() at = w:getAmmoType() end)
-            pcall(function() mt = w:getMagazineType() end)
+            -- some modded weapons return a non-string here; tostring() before any
+            -- string op, or Kahlua throws "Object tried to call nil" on :gsub.
+            pcall(function() at = w:getAmmoType(); if at ~= nil then at = tostring(at) end end)
+            pcall(function() mt = w:getMagazineType(); if mt ~= nil then mt = tostring(mt) end end)
             if at and at ~= "" then neededAmmo[at] = true; neededAmmo[at:gsub("^.*%.", "")] = true end
             if mt and mt ~= "" then neededMags[mt] = true; neededMags[mt:gsub("^.*%.", "")] = true end
         end
@@ -1374,6 +1385,7 @@ local function smartSort(player, opts)
                         local mx, cur, iw = capOf(dest, player), 0, 0
                         pcall(function() cur = dest:getCapacityWeight() end)
                         pcall(function() iw = item:getActualWeight() end)
+                        cur, iw = safeNum(cur, 0), safeNum(iw, 0)
                         if mx and mx > 0 and (cur + (iw or 0)) > mx + 0.001 then ok = false end
                     end
                     fits = ok
@@ -1516,7 +1528,34 @@ local function smartSort(player, opts)
     local floorSorted, floorLeft = 0, 0
     for _, fi in ipairs(collectFloorItems(player)) do
         local it, wo, sq = fi.item, fi.wo, fi.sq
-        if it and not isProtected(it) and not isRottenItem(it)
+        local rotFloor = it and isRottenItem(it) and not isProtected(it)
+        if rotFloor then
+            -- FLOOR ROT -> COMPOSTER. The old skip predates composters (rot used to be
+            -- purged TO the floor deliberately). Ground rot now files into the first
+            -- compost home with room; no bin or no room -> it stays put (old behavior --
+            -- and PASS A's purged pile can't loop back, purge implies the bins are full).
+            for _, cb in ipairs(compostBins) do
+                local fits = false
+                pcall(function() fits = cb.c:isItemAllowed(it) and cb.c:hasRoomFor(player, it) end)
+                if fits then
+                    local ok = pcall(function()
+                        sq:transmitRemoveItemFromSquare(wo)
+                        wo:removeFromWorld()
+                        wo:removeFromSquare()
+                        wo:setSquare(nil)
+                        it:setWorldItem(nil)
+                        it:setJobDelta(0.0)
+                        cb.c:addItem(it)
+                    end)
+                    if ok then
+                        floorSorted = floorSorted + 1
+                        rottenComposted = rottenComposted + 1
+                        touched[cb.c] = true
+                        break
+                    end
+                end
+            end
+        elseif it and not isProtected(it)
            and not instanceof(it, "InventoryContainer")
            and not (EmpireSortConfig and EmpireSortConfig.isNeverMove and EmpireSortConfig.isNeverMove(it)) then
             local cat = categoryOf(it)
@@ -1600,6 +1639,7 @@ local function smartSort(player, opts)
             local n = 0; pcall(function() n = st.c:getItems():size() end)
             local w, mx = -1, -1
             pcall(function() w = st.c:getCapacityWeight() end)
+            w = safeNum(w, -1)
             mx = capOf(st.c, player)
             print(string.format("[EmpireSort DIAG]   ctype=%s tag=%s items=%d weight=%.1f/%.1f", tostring(st.ctype), tg, n, w, mx))
             -- For a LOCKED/designated container, list items that DON'T belong (foreign), with
@@ -1854,6 +1894,7 @@ local function consolidateTypes(player)
                         local mx, cur, iw = capOf(dest, player), 0, 0
                         pcall(function() cur = dest:getCapacityWeight() end)
                         pcall(function() iw = it:getActualWeight() end)
+                        cur, iw = safeNum(cur, 0), safeNum(iw, 0)
                         if mx and mx > 0 and (cur + (iw or 0)) > mx + 0.001 then ok = false end
                     end
                     fits = ok
@@ -2143,4 +2184,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v19.5 loaded. Placed containers FILL FIRST in their tier (below PRIMARY marks); medical/tool/other recognized placed containers now included. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
+print("[EmpireSortAll] Smart Sort v19.6 loaded. Hardened vs corrupted item weights (NaN crash), modded-gun ammo-type fix, floor rot now composts. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
