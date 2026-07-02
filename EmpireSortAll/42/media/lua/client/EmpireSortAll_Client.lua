@@ -905,11 +905,15 @@ local function smartSort(player, opts)
             st.designated, st.homeCats = true, { Perishable = true }
             st.cold = true
         elseif st.placedAmmo then
-            -- placed ammo can on a bench: dedicated Ammo home. Auto-designated --
-            -- item-form containers have no square, so ModData tags can't key them;
-            -- the "ammo" in their type IS the designation. isItemAllowed still lets
-            -- the can itself refuse non-ammo if its mod restricts contents.
-            st.designated, st.homeCats = true, { Ammo = true }
+            -- placed can on a bench: dedicated home, keyed off the can's own type.
+            -- Grenade boxes home Explosives, everything else homes Ammo. Contents are
+            -- King-curated: these never evict and consolidate never touches them.
+            local pct = st.ctype or ""
+            if pct:find("granade", 1, true) or pct:find("grenade", 1, true) or pct:find("explos", 1, true) then
+                st.designated, st.homeCats = true, { Explosives = true }
+            else
+                st.designated, st.homeCats = true, { Ammo = true }
+            end
         else
             local aff = affinityOf(st.ctype)
             if aff then
@@ -1089,8 +1093,10 @@ local function smartSort(player, opts)
     local moves = {}
 
     -- (1) containers: only DESIGNATED ones evict mis-filed items; generals are left alone.
+    -- PLACED CANS are exempt: their contents are hand-curated (grenades in the grenade
+    -- box classify as Explosives, mags as parts...) -- evicting emptied them every sort.
     for _, st in ipairs(stores) do
-        if st.designated then
+        if st.designated and not st.placedAmmo then
             local items = st.c:getItems()
             local snap = {}
             for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
@@ -1733,9 +1739,14 @@ local function consolidateTypes(player)
         elseif isFridge(st.ctype) then
             st.designated, st.homeCats, st.cold = true, { Perishable = true }, true
         elseif st.placedAmmo then
-            -- placed ammo cans: Ammo homes here too, else they'd read as "general"
-            -- and consolidate would merge random types into them.
-            st.designated, st.homeCats = true, { Ammo = true }
+            -- placed cans: same designation split as Smart Sort. eligible() and the
+            -- tally both hard-skip them, so this only keeps them out of the general pool.
+            local pct = st.ctype or ""
+            if pct:find("granade", 1, true) or pct:find("grenade", 1, true) or pct:find("explos", 1, true) then
+                st.designated, st.homeCats = true, { Explosives = true }
+            else
+                st.designated, st.homeCats = true, { Ammo = true }
+            end
         else
             local aff = affinityOf(st.ctype)
             if aff then st.designated, st.homeCats = true, { [aff] = true }
@@ -1748,6 +1759,7 @@ local function consolidateTypes(player)
     -- never pulls a frozen item out of the freezer that Smart Sort would just put back.
     local function eligible(st, cat)
         if st.compost then return false end   -- compost homes never receive via consolidate
+        if st.placedAmmo then return false end -- placed cans are curated: consolidate hands off
         if st.cold then
             if st.freezer then return cat == "Frozen" end
             return cat == "Perishable"
@@ -1770,7 +1782,7 @@ local function consolidateTypes(player)
     -- the fresh-food pile (and dragged it back out of the composter).
     local typeData = {}        -- ft -> { cat=, total=, perCont = { [st] = n } }
     for _, st in ipairs(stores) do
-        if not st.compost then
+        if not st.compost and not st.placedAmmo then
         local items = st.c:getItems()
         for i = 0, items:size() - 1 do
             local it = items:get(i)
@@ -2118,4 +2130,4 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
-print("[EmpireSortAll] Smart Sort v19.3 loaded. Placed ammo cans on benches now join as dedicated Ammo homes. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
+print("[EmpireSortAll] Smart Sort v19.4 loaded. Placed cans PROTECTED: never evicted, never drained by consolidate; grenade boxes home Explosives. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")
