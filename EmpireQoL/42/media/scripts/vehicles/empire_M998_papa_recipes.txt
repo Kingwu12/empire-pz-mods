@@ -1,0 +1,118 @@
+module Base
+{
+    /* EmpireQoL :: craftable parts for Papa_Chad's U.S. M998 Humvee.
+       Papa's mod is loot-only (ArmyHangarMechanics / CrateMechanics /
+       MechanicSpecial tables); KI5's M998 recipes make parts for a different
+       truck. These recipes give the driven Humvee a native crafting path,
+       priced on KI5's bullbar recipe (metal + welding). Metal parts only --
+       glass (windshield/side windows) and door/seat variants stay loot. */
+
+    craftRecipe Empire_M998_MakeBullBar
+    {
+        timedAction = Welding,
+        time = 200,
+        Tags = InHandCraft;Welding,
+        category = Armoring,
+        xpAward = MetalWelding:25,
+        SkillRequired = MetalWelding:5,
+        inputs
+        {
+            item 4 [Base.SmallSheetMetal],
+            item 6 [Base.MetalPipe],
+            item 2 [Base.Screws],
+            item 9 [Base.BlowTorch],
+            item 1 tags[WeldingMask] mode:keep,
+        }
+        outputs
+        {
+            item 1 Base.M998_Bull_Bar2,
+        }
+    }
+
+    craftRecipe Empire_M998_MakeM2Armor
+    {
+        timedAction = Welding,
+        time = 180,
+        Tags = InHandCraft;Welding,
+        category = Armoring,
+        xpAward = MetalWelding:25,
+        SkillRequired = MetalWelding:5,
+        inputs
+        {
+            item 3 [Base.SmallSheetMetal],
+            item 2 [Base.MetalPipe],
+            item 2 [Base.Screws],
+            item 6 [Base.BlowTorch],
+            item 1 tags[WeldingMask] mode:keep,
+        }
+        outputs
+        {
+            item 1 Base.M998_M2_Armor_Green2,
+        }
+    }
+
+    craftRecipe Empire_M998_MakeTurretArmor
+    {
+        timedAction = Welding,
+        time = 220,
+        Tags = InHandCraft;Welding,
+        category = Armoring,
+        xpAward = MetalWelding:30,
+        SkillRequired = MetalWelding:5,
+        inputs
+        {
+            item 4 [Base.SmallSheetMetal],
+            item 2 [Base.MetalPipe],
+            item 2 [Base.Screws],
+            item 8 [Base.BlowTorch],
+            item 1 tags[WeldingMask] mode:keep,
+        }
+        outputs
+        {
+            item 1 Base.M998_Turret_Armor_Green2,
+        }
+    }
+
+    craftRecipe Empire_M998_MakeMuffler
+    {
+        timedAction = Welding,
+        time = 120,
+        Tags = InHandCraft;Welding,
+        category = Mechanical,
+        xpAward = MetalWelding:15,
+        SkillRequired = MetalWelding:3,
+        inputs
+        {
+            item 2 [Base.SmallSheetMetal],
+            item 2 [Base.MetalPipe],
+            item 4 [Base.BlowTorch],
+            item 1 tags[WeldingMask] mode:keep,
+        }
+        outputs
+        {
+            item 1 Base.M998_Muffler2,
+        }
+    }
+
+    craftRecipe Empire_M998_MakeSpareTireCarrier
+    {
+        timedAction = Welding,
+        time = 100,
+        Tags = InHandCraft;Welding,
+        category = Mechanical,
+        xpAward = MetalWelding:10,
+        SkillRequired = MetalWelding:2,
+        inputs
+        {
+            item 1 [Base.SmallSheetMetal],
+            item 2 [Base.MetalPipe],
+            item 2 [Base.Screws],
+            item 3 [Base.BlowTorch],
+            item 1 tags[WeldingMask] mode:keep,
+        }
+        outputs
+        {
+            item 1 Base.M998_Spare_Tire_Carrier2,
+        }
+    }
+}
