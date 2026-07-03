@@ -1,7 +1,9 @@
 -- EmpireQoL :: 47_QuickRepair.lua -- one-click vehicle repair from base stock
 -- Right-click a vehicle at base -> "Empire: Quick repair from base".
--- For every damaged repairable part: score every valid fixer by BASE STOCK and
--- pick the most plentiful one (plentiful = cheap in the base economy), but only
+-- For every damaged repairable part: score every valid fixer by PREDICTED
+-- CONDITION GAIN (FixingManager.getCondRepaired -- the exact number the vanilla
+-- tooltip shows as "Potential repair"), so Fix-a-Flat beats duct tape on a tire
+-- automatically. Ties break toward the most plentiful base stock, but only
 -- if using it leaves at least RESERVE units on the shelves -- a quick repair
 -- must never drain the last of anything. Fetch exactly what the chosen fix
 -- needs (fixers + the fixing's global tool), then queue the vanilla fix action
@@ -10,6 +12,7 @@
 
 local RESERVE = 4          -- never let base stock of a material drop below this
 local COND_THRESHOLD = 96  -- only bother with parts below this condition
+local MIN_GAIN = 3         -- skip fixes predicted to restore less than this %
 
 local function qualify(ft, moduleName)
     if not ft or ft == "" then return nil end
@@ -155,8 +158,15 @@ local function quickRepair(playerObj, vehicle, pass)
                                     local fromBase = need - carried
                                     if fromBase < 0 then fromBase = 0 end
                                     if (carried + stock) >= need and (stock - fromBase) >= RESERVE then
-                                        if (not best) or stock > best.stock then
-                                            best = { fixingNum = i, fixerNum = j, ft = ft, need = need, stock = stock, toolFt = toolFt }
+                                        -- predicted % restored: same java call the vanilla
+                                        -- fix tooltip uses ("Potential repair"). Accounts
+                                        -- for fixer strength, skill and times-repaired.
+                                        local gain, failCh = 5, nil
+                                        pcall(function() gain = FixingManager.getCondRepaired(invItem, playerObj, fixing, fixer) or 5 end)
+                                        pcall(function() failCh = FixingManager.getChanceOfFail(invItem, playerObj, fixing, fixer) end)
+                                        if (not best) or gain > best.gain
+                                            or (gain == best.gain and stock > best.stock) then
+                                            best = { fixingNum = i, fixerNum = j, ft = ft, need = need, stock = stock, toolFt = toolFt, gain = gain, failCh = failCh }
                                         end
                                     end
                                 end
@@ -164,7 +174,12 @@ local function quickRepair(playerObj, vehicle, pass)
                         end
                     end
                 end
-                if best then
+                if best and best.gain < MIN_GAIN then
+                    -- even the BEST fixer barely moves the needle: repairing is
+                    -- a waste of materials, replacing is the real answer.
+                    replaceOnly = replaceOnly + 1
+                    noteSkip(part, cond, "best fixer only +" .. math.floor(best.gain) .. "% -- use Quick replace")
+                elseif best then
                     local ok = pullFromBase(playerInv, best.ft, best.need, fetched)
                     if ok and best.toolFt and invCount(playerInv, best.toolFt) == 0 then
                         ok = pullFromBase(playerInv, best.toolFt, 1, fetched)
@@ -187,7 +202,8 @@ local function quickRepair(playerObj, vehicle, pass)
                                 queued = true
                                 local pid = "part"
                                 pcall(function() pid = part:getId() end)
-                                repaired[#repaired + 1] = pid .. " (" .. cond .. "%)"
+                                local failTxt = best.failCh and (" fail " .. math.ceil(best.failCh) .. "%") or ""
+                                repaired[#repaired + 1] = pid .. " (" .. cond .. "% +" .. math.floor(best.gain) .. "% via " .. best.ft .. failTxt .. ")"
                             end)
                         else
                             skipGate = skipGate + 1  -- skill or requirement gate said no
@@ -264,4 +280,4 @@ Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobject
     end)
 end)
 
-print("[EmpireQoL] QuickRepair loaded: right-click vehicle -> repair every damaged part from base stock (most plentiful material, reserve " .. RESERVE .. " kept)")
+print("[EmpireQoL] QuickRepair loaded: right-click vehicle -> repair every damaged part from base stock (best predicted gain wins, min gain " .. MIN_GAIN .. "%, reserve " .. RESERVE .. " kept)")
