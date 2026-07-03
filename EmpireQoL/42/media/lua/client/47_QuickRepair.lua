@@ -264,6 +264,13 @@ local function vroTryPart(playerObj, playerInv, vehicle, part, cond, fetched, re
         getAbsoluteX = function() return 0 end,
         getAbsoluteY = function() return 0 end,
         doMenuTooltip = function() end,
+        -- AutoMechanics and WarThunderVehicleLibrary both wrap
+        -- doPartContextMenu, both crash on this stand-in self, and both honor
+        -- this inhibit flag (Panzer copied AutoMechanics' code). No-op methods
+        -- kept as a second line of defense.
+        inhibitAutoMechanics_doPartContextMenu = true,
+        addAutoMechanicsButtons = function() end,
+        noEnginePart = function() end,
     }
     pcall(function() ISVehicleMechanics.doPartContextMenu(fake, part, 0, 0) end)
 
@@ -310,7 +317,8 @@ local function vroTryPart(playerObj, playerInv, vehicle, part, cond, fetched, re
     end)
     pcall(function() ctx:hideAndChildren() end)
     pcall(function() ctx:setVisible(false) end)
-    return queuedHere or handled
+    if handled then end -- (blocked parts are named above; vanilla still gets a shot)
+    return queuedHere
 end
 
 local MAX_PASSES = 4
@@ -363,7 +371,13 @@ local function quickRepair(playerObj, vehicle, pass)
             end
         elseif part and invItem and cond < COND_THRESHOLD then
             local vanillaQueued = false
+            -- VRO FIRST: its lua recipes supersede (and deliberately hide)
+            -- several script fixings that FixingManager still returns -- the
+            -- welding ones need torch USES, which item-counting cannot see,
+            -- and queueing them produced "bugged action, cleared queue" wipes.
+            local vroQueued = vroTryPart(playerObj, playerInv, vehicle, part, cond, fetched, repaired, noteSkip)
             local fixingList = nil
+            if not vroQueued then
             pcall(function() fixingList = FixingManager.getFixes(invItem) end)
             if fixingList and not fixingList:isEmpty() then
                 -- pick (fixingNum, fixerNum) with the most plentiful base stock
@@ -476,15 +490,11 @@ local function quickRepair(playerObj, vehicle, pass)
                     noteSkip(part, cond, "no material clears skill+reserve")
                 end
             end
-            -- VRO fallback: when vanilla had no fixing recipe OR the vanilla
-            -- path could not queue (reserve/skill/materials), VRO gets a shot
-            if not vanillaQueued then
-                if not vroTryPart(playerObj, playerInv, vehicle, part, cond, fetched, repaired, noteSkip) then
-                    if not (fixingList and not fixingList:isEmpty()) then
-                        skipNoFix = skipNoFix + 1
-                        noteSkip(part, cond, "no vanilla or VRO repair recipe -- replace-only")
-                    end
-                end
+            end
+            if (not vroQueued) and (not vanillaQueued)
+                and not (fixingList and not fixingList:isEmpty()) then
+                skipNoFix = skipNoFix + 1
+                noteSkip(part, cond, "no vanilla or VRO repair recipe -- replace-only")
             end
         end
     end
@@ -537,11 +547,24 @@ Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobject
         local src = nil
         pcall(function() src = EmpireQoL_BaseContainers(player) end)
         if not src or #src == 0 then return end
-        context:addOption("Empire: Quick repair from base", player, quickRepair, veh)
+        context:addOption("Empire: Quick repair from base", player, function(p, v)
+            -- run OUTSIDE ISContextMenu.onMouseUp: vroTryPart reuses the
+            -- context-menu singleton, and mutating it mid-click crashed
+            local fired = false
+            local once
+            once = function()
+                if fired then return end
+                fired = true
+                Events.OnTick.Remove(once)
+                quickRepair(p, v)
+            end
+            Events.OnTick.Add(once)
+        end, veh)
     end)
 end)
 
--- exported for the combined FIX flow in 48_QuickReplace (replace, then repair)
+-- exported for the combined FIX flow in 48_QuickReplace (replace, then repair);
+-- the FIX watcher already calls this from OnTick, outside any menu handler
 EmpireQoL_QuickRepair = quickRepair
 
 print("[EmpireQoL] QuickRepair loaded: vanilla + VRO repair from base stock (best gain wins, min gain " .. MIN_GAIN .. "%, reserve " .. RESERVE .. ", VRO " .. (VROCore and "detected" or "absent") .. ")")

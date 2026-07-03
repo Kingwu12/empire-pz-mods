@@ -497,6 +497,13 @@ local function installTuningWhyDisabled()
     ISVehicleTuning2.render = function(self, ...)
         local r = prevRender(self, ...)
         pcall(function()
+            -- one-shot heartbeat per window: proves this hook sees the window
+            -- King is actually clicking in (two tsarslib copies are installed;
+            -- if the Modification window is another class, this never prints)
+            if not self._empireWhySeen then
+                self._empireWhySeen = true
+                print("[EmpireQoL] TuningWhy: tuning window render observed -- hook is on the live class")
+            end
             local box = self.getRecipeListBox and self:getRecipeListBox()
             local it = box and box.items and box.items[box.selected]
             local RecipeItem = it and it.item
@@ -504,10 +511,25 @@ local function installTuningWhyDisabled()
             local key = tostring(box.selected) .. ":" .. tostring(RecipeItem.available)
             if self._empireWhyKey == key then return end
             self._empireWhyKey = key
-            if RecipeItem.available == false then
+            -- non-recipe rows (e.g. category headers) have no recipe fields:
+            -- report their shape once instead of mis-diagnosing them
+            if RecipeItem.partName == nil and RecipeItem.type == nil then
+                local keys = {}
+                pcall(function()
+                    for k in pairs(RecipeItem) do
+                        keys[#keys + 1] = tostring(k)
+                        if #keys >= 8 then break end
+                    end
+                end)
+                print("[EmpireQoL] TuningWhy: selected row is not a recipe (keys: " .. table.concat(keys, ",") .. ")")
+                return
+            end
+            -- nil counts as disabled: the button gate is enable=available,
+            -- and nil disables it exactly like false while dodging ==false
+            if not RecipeItem.available then
                 local why = diagnose(self, RecipeItem)
                 print("[EmpireQoL] TuningWhy: '" .. tostring(RecipeItem.itemName or RecipeItem.partName or "?")
-                    .. "' DISABLED -- " .. why)
+                    .. "' DISABLED (available=" .. tostring(RecipeItem.available) .. ") -- " .. why)
                 pcall(function()
                     HaloTextHelper.addTextWithArrow(self.character, "Tuning blocked: " .. why, "[br/]", false, HaloTextHelper.getColorRed())
                 end)
