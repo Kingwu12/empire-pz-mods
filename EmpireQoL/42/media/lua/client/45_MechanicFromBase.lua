@@ -415,6 +415,109 @@ local function installTuningQuartermaster()
     print("[EmpireQoL] TuningQM: install-click quartermaster armed (ISVehicleTuning2.onInstallPart)")
 end
 
+-- WHY-DISABLED REPORTER: tsarslib sets craftOneButton.enable = RecipeItem.available
+-- every render, and three gates inside IsRecipeValid (recipe not learned, skill
+-- too low, missing items) return false WITHOUT setting any error text -- the
+-- click just dies on a dead button with green ingredients still showing. This
+-- watches the selected recipe after each render and, once per selection,
+-- prints + halos exactly which gate said no.
+local function installTuningWhyDisabled()
+    if not (ISVehicleTuning2 and type(ISVehicleTuning2.render) == "function") then
+        print("[EmpireQoL] TuningWhy: ISVehicleTuning2.render not found -- skipped")
+        return
+    end
+    local function diagnose(self, RecipeItem)
+        local out = {}
+        if RecipeItem.recipeNotLearn and RecipeItem.recipeNotLearn ~= "" then
+            out[#out + 1] = "recipe NOT LEARNED (need: " .. tostring(RecipeItem.recipeNotLearn) .. ")"
+        end
+        local part = nil
+        pcall(function() part = self.vehicle:getPartById(RecipeItem.partName) end)
+        if not part then
+            out[#out + 1] = "vehicle has no part slot '" .. tostring(RecipeItem.partName) .. "'"
+        elseif RecipeItem.type == "install" then
+            if RecipeItem.requireModel then
+                local m = nil
+                pcall(function()
+                    local md = part:getModData()
+                    m = md.tuning2 and md.tuning2.model
+                end)
+                if m ~= RecipeItem.requireModel then
+                    out[#out + 1] = "needs base model '" .. tostring(RecipeItem.requireModel)
+                        .. "' first (slot has '" .. tostring(m) .. "')"
+                end
+            else
+                local ii = nil
+                pcall(function() ii = part:getInventoryItem() end)
+                if ii then out[#out + 1] = "slot already occupied -- uninstall the current part first" end
+            end
+        end
+        if RecipeItem.skills then
+            for perkName, perkLevel in pairs(RecipeItem.skills) do
+                local have = 0
+                pcall(function()
+                    local perk = Perks.FromString(perkName)
+                    if perk then have = self.character:getPerkLevel(perk) end
+                end)
+                if have < perkLevel then
+                    out[#out + 1] = "SKILL " .. tostring(perkName) .. " " .. have .. "/" .. perkLevel
+                end
+            end
+        end
+        local hasAll = true
+        pcall(function() hasAll = self:HasAllRequiredItems(RecipeItem) end)
+        if not hasAll then
+            local miss = {}
+            local inv = self.character:getInventory()
+            for _, list in ipairs({ RecipeItem.use, RecipeItem.tools }) do
+                if list then
+                    for _, req in pairs(list) do
+                        local need = req.count or 1
+                        local have = 0
+                        if req.fullType then
+                            pcall(function() have = inv:getAllTypeRecurse(req.fullType):size() end)
+                        end
+                        if have < need then
+                            miss[#miss + 1] = tostring(req.fullType or req.itemTag or "?") .. " " .. have .. "/" .. need .. " carried"
+                        end
+                    end
+                end
+            end
+            out[#out + 1] = "required-items gate failed"
+                .. (#miss > 0 and (": " .. table.concat(miss, ", ")) or "")
+        end
+        local driving = false
+        pcall(function() driving = self.character:isDriving() end)
+        if driving then out[#out + 1] = "player is driving" end
+        if RecipeItem.error then out[#out + 1] = "mod error: " .. tostring(RecipeItem.error) end
+        if #out == 0 then out[#out + 1] = "no gate identified -- available flag stale (report this)" end
+        return table.concat(out, " | ")
+    end
+    local prevRender = ISVehicleTuning2.render
+    ISVehicleTuning2.render = function(self, ...)
+        local r = prevRender(self, ...)
+        pcall(function()
+            local box = self.getRecipeListBox and self:getRecipeListBox()
+            local it = box and box.items and box.items[box.selected]
+            local RecipeItem = it and it.item
+            if not RecipeItem or RecipeItem.type == "fake" then return end
+            local key = tostring(box.selected) .. ":" .. tostring(RecipeItem.available)
+            if self._empireWhyKey == key then return end
+            self._empireWhyKey = key
+            if RecipeItem.available == false then
+                local why = diagnose(self, RecipeItem)
+                print("[EmpireQoL] TuningWhy: '" .. tostring(RecipeItem.itemName or RecipeItem.partName or "?")
+                    .. "' DISABLED -- " .. why)
+                pcall(function()
+                    HaloTextHelper.addTextWithArrow(self.character, "Tuning blocked: " .. why, "[br/]", false, HaloTextHelper.getColorRed())
+                end)
+            end
+        end)
+        return r
+    end
+    print("[EmpireQoL] TuningWhy: disabled-button reporter armed (render hook, one-shot per selection)")
+end
+
 Events.OnGameStart.Add(function()
     local installed = false
     local function install()
@@ -424,6 +527,7 @@ Events.OnGameStart.Add(function()
         installMechShim()
         installTuningShim()
         installTuningQuartermaster()
+        installTuningWhyDisabled()
     end
     Events.OnTick.Add(install)
 end)
