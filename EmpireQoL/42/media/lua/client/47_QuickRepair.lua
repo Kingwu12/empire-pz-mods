@@ -280,4 +280,7 @@ Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobject
     end)
 end)
 
+-- exported for the combined FIX flow in 48_QuickReplace (replace, then repair)
+EmpireQoL_QuickRepair = quickRepair
+
 print("[EmpireQoL] QuickRepair loaded: right-click vehicle -> repair every damaged part from base stock (best predicted gain wins, min gain " .. MIN_GAIN .. "%, reserve " .. RESERVE .. " kept)")

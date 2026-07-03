@@ -136,6 +136,36 @@ local function quickReplace(playerObj, vehicle)
     end
 end
 
+-- COMBINED FIX: King's mental model is "fix my bus", not the game's
+-- repair-vs-replace taxonomy. One option does the full flow: replace the
+-- destroyed/missing/recipe-less parts from base spares first, then when the
+-- action queue drains hand off to QuickRepair's multi-pass to top up
+-- everything patchable. Red parts that stay red afterwards mean "no spare in
+-- base" -- QuickReplace names each one in its skip line.
+local function fixVehicle(playerObj, vehicle)
+    print("[EmpireQoL] FixVehicle: stage 1 = replace from spares, stage 2 = repair passes")
+    quickReplace(playerObj, vehicle)
+    local ticks = 0
+    local watcher
+    watcher = function()
+        ticks = ticks + 1
+        if ticks % 30 ~= 0 then return end
+        local empty = true
+        pcall(function()
+            local q = ISTimedActionQueue.getTimedActionQueue(playerObj)
+            empty = (not q) or (not q.queue) or (#q.queue == 0)
+        end)
+        if empty then
+            Events.OnTick.Remove(watcher)
+            print("[EmpireQoL] FixVehicle: replace queue drained -> repair passes")
+            if EmpireQoL_QuickRepair then
+                pcall(EmpireQoL_QuickRepair, playerObj, vehicle)
+            end
+        end
+    end
+    Events.OnTick.Add(watcher)
+end
+
 Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
     if test then return end
     pcall(function()
@@ -147,6 +177,7 @@ Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobject
         local src = nil
         pcall(function() src = EmpireQoL_BaseContainers(player) end)
         if not src or #src == 0 then return end
+        context:addOption("Empire: FIX vehicle (replace + repair)", player, fixVehicle, veh)
         context:addOption("Empire: Quick replace from base spares", player, quickReplace, veh)
     end)
 end)
