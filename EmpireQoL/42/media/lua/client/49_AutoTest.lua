@@ -85,6 +85,13 @@ local function runTests()
         check("fixing.tireItem", false, "no vanilla tire item spawnable -- names changed?")
     end
 
+    -- T5b: VRO parallel repair system reachable (QuickRepair v3 leans on it)
+    local vro = nil
+    pcall(function() vro = require "VRO/Core" end)
+    local recipeCount = 0
+    pcall(function() recipeCount = (vro and type(vro.Recipes) == "table") and #vro.Recipes or 0 end)
+    check("vro.core", vro ~= nil, vro and (recipeCount .. " recipes loaded") or "VRO/Core not requireable")
+
     -- T6: base cache returns containers when at base (soft: 0 is legal away from base)
     local conts = nil
     pcall(function() conts = EmpireQoL_BaseContainers(getSpecificPlayer(0)) end)
