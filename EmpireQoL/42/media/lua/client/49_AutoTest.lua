@@ -61,7 +61,8 @@ local function runTests()
     -- T5: fixing pipe alive end-to-end on a tire (VRO supplies tire fixings;
     -- this is the exact path QuickRepair walks, minus the vehicle)
     local tire = nil
-    for _, ft in ipairs({ "Base.OldTire", "Base.NormalTire", "Base.ModernTire" }) do
+    -- vanilla tires are numbered by size: OldTire1/2/3 (generated/items/normal.txt)
+    for _, ft in ipairs({ "Base.OldTire2", "Base.NormalTire2", "Base.ModernTire2" }) do
         pcall(function() tire = tire or instanceItem(ft) end)
     end
     if tire then
