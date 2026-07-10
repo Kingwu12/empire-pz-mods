@@ -13,3 +13,4 @@ EmpireLean.txt.*
 Thumbs.db
 desktop.ini
 *.tmp
+!/README.md
