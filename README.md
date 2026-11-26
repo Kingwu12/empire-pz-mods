@@ -2,7 +2,7 @@
 
 A suite of personal Lua mods for **Project Zomboid** (Build 42; a few older mods date from Build 41), written for one long-running "empire" playthrough: base logistics, vehicle repair from base stock, inventory sorting, survivor-NPC management and quality-of-life fixes.
 
-- **Status:** being brought to Build 42.22.2 (stable since 9 Nov 2026) for a new playthrough. Last tested in game on 42.19. The pack, launch config, NPC options and a bake-off protocol are in [`docs/PLAYTHROUGH-B42.22.md`](docs/PLAYTHROUGH-B42.22.md). **Build 43 does not exist yet.** After updating, run the self-test (Numpad 9) first: it now checks every vanilla function the mods call or wrap.
+- **Status:** being brought to Build 42.22.2 (stable since 9 Nov 2026) for a new playthrough. Last tested in game on 42.19. The pack, launch config, NPC options and a bake-off protocol are in [`docs/PLAYTHROUGH-B42.22.md`](docs/PLAYTHROUGH-B42.22.md). The 184-mod pack audit and two ready presets (`docs/presets/`) are in section 5b; the audit of this suite and the next automation jobs are in [`docs/SUITE-AUDIT-2026-11-26.md`](docs/SUITE-AUDIT-2026-11-26.md). **Build 43 does not exist yet.** After updating, run the self-test (Numpad 9) first: it now checks every vanilla function the mods call or wrap.
 - **Build 41 only, do not enable on B42:** EmpireNPC, EmpirePerf, EmpireAmmo (recipes switched off). **EmpireCraftFix** wraps `ISCraftingUI.new` without changing it, so it does nothing.
 - **Distribution:** not packaged for the Steam Workshop. Install by copying folders (below).
 - **Language:** Lua (PZ's Kahlua runtime) plus PZ script `.txt` files. No build step.

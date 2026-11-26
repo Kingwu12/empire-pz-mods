@@ -1,0 +1,44 @@
+﻿VERSION = 1,
+
+mods
+{
+    mod = NeatUI_Framework,
+    mod = PlaceAnywhereMod,
+    mod = NoWelcomeWindow,
+    mod = better-auto-mechanics,
+    mod = LNB42,
+    mod = LSB42,
+    mod = LFB42,
+    mod = LCB42,
+    mod = Project_Cook,
+    mod = Project_Cook_Pixel_Icon_Pack,
+    mod = WashFix,
+    mod = KillCount,
+    mod = CleanHotBar,
+    mod = FastRipClothes,
+    mod = AutoCook,
+    mod = SandboxSettings,
+    mod = VestandOveralls,
+    mod = RainCleansBlood,
+    mod = VehicleRepairOverhaul,
+    mod = VehicleSalvageOverhaulB42,
+    mod = P4TidyUpMeister,
+    mod = ReducedWoodWeight2x41,
+    mod = BetterFlashlightsFixed,
+    mod = ModLoadOrderSorter_b42,
+    mod = BurdSurvivalJournals,
+    mod = GenStreetlightRestore,
+    mod = P4HasBeenRead,
+    mod = mapmodmanager,
+    mod = Tempo_PerfKit,
+    mod = EmpireEatAll,
+    mod = EmpireQoL,
+    mod = EmpireSortAll,
+    mod = EmpireLoot,
+    mod = EmpireProduction,
+    mod = EmpireZones,
+}
+
+maps
+{
+}
