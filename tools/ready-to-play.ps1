@@ -96,7 +96,10 @@ $dupes = @($index.Keys | Where-Object { @($index[$_] | ForEach-Object { $_.Item 
 
 # Workshop ids for the "subscribe to these" list: audit table + the mods added on 26 Nov
 $wsId = @{ VB_CommonSense = '3750253491'; EvolvingTraitsWorld = '2914075159'; H_E_C_U = '3737864976'; Bandits2 = '3268487204';
-           NPCCrew = '3800132623'; KI5PerfPatch = '3808100388'; KI5GeneralFixes = '3789366983' }
+           NPCCrew = '3800132623'; KI5PerfPatch = '3808100388'; KI5GeneralFixes = '3789366983';
+           # Louisville Shipping Port (the port map with the shipping containers) and the tile packs it needs
+           SimonMDLVHarbor = '3149613879'; simonMDsTiles = '2852704777'; 'Diederiks Tile Palooza' = '2337452747'; DylansTiles = '2599752664';
+           melos_tiles_for_miles_pack = '2879745353'; tkTiles_01 = '2384329562'; UnofficialMappersCommunityTilePack = '3628736763' }
 $auditCsv = Join-Path $presetSrc 'pack-audit.csv'
 if (Test-Path $auditCsv) { foreach ($r in (Import-Csv $auditCsv)) { if (-not $wsId.ContainsKey($r.mod_id)) { $wsId[$r.mod_id] = $r.workshop_id } } }
 
@@ -132,7 +135,14 @@ function Test-Preset($name, $isTarget) {
         $ok = $false
         $msg = "$($missing.Count) mod(s) not installed. Subscribe on Steam, then run this again:"
         if ($isTarget) { Bad $msg } else { Say "  [--] $msg" }
-        foreach ($m in $missing) { Say ("         {0}  https://steamcommunity.com/sharedfiles/filedetails/?id={1}" -f $m, $wsId[$m]) }
+        foreach ($m in $missing) {
+            Say ("         {0}  https://steamcommunity.com/sharedfiles/filedetails/?id={1}" -f $m, $wsId[$m])
+            # the Workshop item is on disk but its mod id is not the one the preset names: show what it really provides
+            if ($wsId[$m] -and (Test-Path -LiteralPath (Join-Path $workshop $wsId[$m]))) {
+                $have = @($index.Keys | Where-Object { @($index[$_] | Where-Object { $_.Item -eq ('workshop:' + $wsId[$m]) }).Count -gt 0 })
+                Say ("           item {0} is installed but has no mod id '{1}'. Ids it provides: {2}" -f $wsId[$m], $m, ($have -join ', '))
+            }
+        }
     }
     foreach ($d in $presetDupes) {
         $ok = $false
