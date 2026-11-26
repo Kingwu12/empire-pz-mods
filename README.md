@@ -2,7 +2,8 @@
 
 A suite of personal Lua mods for **Project Zomboid** (Build 42; a few older mods date from Build 41), written for one long-running "empire" playthrough: base logistics, vehicle repair from base stock, inventory sorting, survivor-NPC management and quality-of-life fixes.
 
-- **Status:** dormant. Last code change 3 July 2026; nothing is in active development.
+- **Status:** being brought to Build 42.22.2 (stable since 9 Nov 2026) for a new playthrough. Last tested in game on 42.19. The pack, launch config, NPC options and a bake-off protocol are in [`docs/PLAYTHROUGH-B42.22.md`](docs/PLAYTHROUGH-B42.22.md). **Build 43 does not exist yet.** After updating, run the self-test (Numpad 9) first: it now checks every vanilla function the mods call or wrap.
+- **Build 41 only, do not enable on B42:** EmpireNPC, EmpirePerf, EmpireAmmo (recipes switched off). **EmpireCraftFix** wraps `ISCraftingUI.new` without changing it, so it does nothing.
 - **Distribution:** not packaged for the Steam Workshop. Install by copying folders (below).
 - **Language:** Lua (PZ's Kahlua runtime) plus PZ script `.txt` files. No build step.
 
@@ -16,7 +17,7 @@ Each top-level `Empire*/` folder is one standalone mod. "B42" means the mod has 
 | **EmpireSortAll** | B42 | One-button smart sort of inventory into nearby containers by category; containers can be locked to a category from the world right-click menu. |
 | **EmpireZones** | B42 | Paint freeform, multi-floor base/work zones (base, farm, guard, workshop, storage), persisted in the save. |
 | **EmpireProduction** | B42 | Accrual-based automation: a container becomes a production node that converts inputs to outputs over game time. Recipes are data. |
-| **EmpireLoot** | B42 | Auto engine start on entering a vehicle. (The loot filter and trailer transfer were removed from the B42 version; they remain in the root Build 41 copy.) |
+| **EmpireLoot** | B42 | Auto engine start on entering a vehicle (its per-frame handler is only registered between entering and the next tick). (The loot filter and trailer transfer were removed from the B42 version; they remain in the root Build 41 copy.) |
 | **EmpireAmmoDrop** | B42 | Zombies drop ammo on death (`OnZombieDead`); police and military zombies carry more. |
 | **EmpireEatAll** | B42 | The normal "Eat" click eats the whole item; no portion submenu. |
 | **EmpireCommand** | B42 | Readable roster/command window for the Knox Survivors mod (follow, base, rest, call, unstick, combat policy). Requires Knox Survivors. |

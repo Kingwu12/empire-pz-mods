@@ -15,14 +15,25 @@ EmpireLoot = EmpireLoot or {}
 -- later the seat/driver state is settled, so we gate on the same checks the base
 -- game's start-engine action uses -- no more error spam, and it actually starts.
 local pendingEngineStart = nil
+local tickArmed = false
+local tryPendingEngineStart  -- forward decl: armed from the enter event, removes itself after one run
 
+-- Perf (42.22 pass): the tick handler used to sit on OnTick for the whole session doing a
+-- nil check every frame. It is now registered only between "entered a vehicle" and the one
+-- tick that follows, so it costs nothing while walking, building or fighting.
 local function onPlayerEnterVehicle(player)
     if player and player:getPlayerNum() == 0 then
         pendingEngineStart = player
+        if not tickArmed then
+            tickArmed = true
+            Events.OnTick.Add(tryPendingEngineStart)
+        end
     end
 end
 
-local function tryPendingEngineStart()
+tryPendingEngineStart = function()
+    Events.OnTick.Remove(tryPendingEngineStart)
+    tickArmed = false
     local player = pendingEngineStart
     if not player then return end
     pendingEngineStart = nil
@@ -36,7 +47,6 @@ local function tryPendingEngineStart()
     end)
 end
 
-Events.OnTick.Add(tryPendingEngineStart)
 if Events.OnEnterVehicle then Events.OnEnterVehicle.Add(onPlayerEnterVehicle) end
 
 print("[EmpireLoot] Loaded (auto engine start only; loot filter + trailer transfer retired).")

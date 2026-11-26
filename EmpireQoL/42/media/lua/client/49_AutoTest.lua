@@ -26,6 +26,67 @@ local function runTests()
     check("api.ISPathFindAction.pathToVehicleArea", ISPathFindAction ~= nil and ISPathFindAction.pathToVehicleArea ~= nil)
     check("api.HaloTextHelper", HaloTextHelper ~= nil)
 
+    -- T1b: every vanilla function the Empire mods call or WRAP, resolved by dotted path.
+    -- Added for the 42.19 -> 42.22.2 jump (TIS changed several ISInventoryPaneContextMenu /
+    -- ISWorldObjectContextMenu signatures and removed some entry points): one keypress now
+    -- names exactly which hook point vanished instead of a silent no-op.
+    -- A missing REQUIRED symbol is a FAIL (the wrapper that depends on it is dead);
+    -- OPTIONAL ones come from third-party mods (tsarslib, Craft Helper) or are guarded in
+    -- their callers, so absence is only a WARN.
+    local function resolve(path)
+        local cur = _G
+        for part in string.gmatch(path, "[^%.]+") do
+            if type(cur) ~= "table" then return nil end
+            cur = cur[part]
+            if cur == nil then return nil end
+        end
+        return cur
+    end
+    local required = {
+        "FixingManager.getChanceOfFail", "FixingManager.getCondRepaired", "FixingManager.getFixes",
+        "ISBaseTimedAction.new", "ISBaseTimedAction.perform", "ISBaseTimedAction.stop",
+        "ISBuildIsoEntity.create",
+        "ISContextMenu.get", "ISContextMenu.getNew", "ISContextMenu.calcWidth", "ISContextMenu.addOption",
+        "ISFixVehiclePartAction.new",
+        "ISHandcraftAction.performRecipe", "ISHandcraftAction.start",
+        "ISInventoryPage.dirtyUI", "ISInventoryPane.getActualItems",
+        "ISInventoryPaneContextMenu.getContainers", "ISInventoryPaneContextMenu.onFix",
+        "ISInventoryTransferAction.perform",
+        "ISLoadBulletsInMagazine.new", "ISModalDialog.new", "ISTextBox.new",
+        "ISReloadManager.startReloadFromUi",
+        "ISTimedActionQueue.add", "ISTimedActionQueue.getTimedActionQueue",
+        "ISVehicleMechanics.doPartContextMenu",
+        "ISVehicleMenu.getVehicleToInteractWith", "ISVehicleMenu.onStartEngine",
+        "ISVehiclePartMenu.onInstallPart", "ISVehiclePartMenu.onUninstallPart",
+        "ISWorldObjectContextMenu.equip", "ISWorldObjectContextMenu.onConfirmSleep",
+        "ISWorldObjectContextMenu.onSleep",
+        "ModData.getOrCreate",
+    }
+    local optional = {
+        "ISCraftAction.perform",          -- B41-era; BaseCache wraps it only if present
+        "ISCraftingUI.new",               -- Craft Helper UI (EmpireCraftFix)
+        "ISVehicleTuning2.getContainers", -- tsarslib / ATA tuning UI
+        "ISVehicleTuning2.onInstallPart",
+        "ISVehicleTuning2.render",
+    }
+    for _, path in ipairs(required) do
+        local v = resolve(path)
+        check("api." .. path, type(v) == "function" or type(v) == "table")
+    end
+    for _, path in ipairs(optional) do
+        local v = resolve(path)
+        if v ~= nil then
+            check("api.opt." .. path, true)
+        else
+            print("[EmpireTest] WARN api.opt." .. path .. " -- absent (third-party mod not loaded, or removed in this build)")
+        end
+    end
+    check("api.Events.OnZombieDead", Events ~= nil and Events.OnZombieDead ~= nil)
+    check("api.Events.EveryTenMinutes", Events ~= nil and Events.EveryTenMinutes ~= nil)
+    pcall(function()
+        print("[EmpireTest] game version: " .. tostring(getCore():getVersion()) .. " / " .. tostring(getCore():getGameVersion():toString()))
+    end)
+
     -- T2: Empire feature globals loaded
     check("feature.BaseContainers", type(EmpireQoL_BaseContainers) == "function")
     local empireGlobals = {}
