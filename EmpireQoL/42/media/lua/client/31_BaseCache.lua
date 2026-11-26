@@ -136,6 +136,14 @@ function EmpireBaseCache.get(force)
     return { base = base, byType = state.byType, containers = state.containers, totalItems = state.totalItems }
 end
 
+-- The last index that was built, even when the player is NOT in the base right now (get() returns nil
+-- outside). For the pre-trip restock, which runs a beat after leaving. Never rebuilds. The caller must
+-- check the containers are still live (loaded square) before moving anything out of them.
+function EmpireBaseCache.peek()
+    if #state.containers == 0 then return nil end
+    return { base = state.baseName, byType = state.byType, containers = state.containers, totalItems = state.totalItems, builtMs = state.builtMs, stale = true }
+end
+
 function EmpireBaseCache.count(fullType)
     local c = EmpireBaseCache.get()
     if not c then return 0 end

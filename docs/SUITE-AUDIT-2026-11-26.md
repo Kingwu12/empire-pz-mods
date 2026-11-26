@@ -221,6 +221,8 @@ Better Sorting (data-only, test with SortAll), Proximity Inventory (overlaps the
 
 ## D. Ranked automation candidates
 
+> **Status 27 Nov 2026:** D1 (hardening: `carriedOnly`, `sources`, `freeOf` memo), D4, D5, D6 and D7 are built, mock-tested and in the in-game self-test, not yet run in the game. What was built and what is still untested: `docs/AUTOMATION-JOBS-2026-11-26.md`. D2 and D3 were already in `13_AutoChores.lua`. D8-D10 are untouched.
+
 Rule for all: no `OnTick`, `OnPlayerUpdate`, `OnRenderTick` or `LoadGridsquare` handler doing scans. Allowed triggers: EveryTenMinutes, EveryOneMinute (cheap guards only), OnExitVehicle/OnEnterVehicle, OnZombieDead (counter only), OnRefreshInventoryWindowContainers stage "end", one-shot timers armed by an event, and wraps of vanilla actions' `perform`. Guard every automation with the 13_AutoChores `busy()` checks and a per-chore failure breaker.
 
 ### D1. Auto-sort after a trip (loot comes home filed)

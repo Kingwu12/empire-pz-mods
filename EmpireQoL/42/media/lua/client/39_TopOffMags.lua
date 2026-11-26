@@ -130,7 +130,8 @@ local function stageRounds(main, cont, itemKey, need, recs, depth)
     return stagedN
 end
 
-local function topOff(player)
+local function topOff(player, opts)
+    local quiet = type(opts) == "table" and opts.quiet == true   -- automation (17_PreTripRestock): no chatter when there is nothing to do
     if not player then player = getSpecificPlayer(0) end
     if not player then return end
     local inv = player:getInventory()
@@ -139,8 +140,8 @@ local function topOff(player)
     local magRecs, seen = {}, {}
     collectMags(inv, magRecs, seen, 0, inv)
     if #magRecs == 0 then
-        HaloTextHelper.addTextWithArrow(player, "No empty mags on you", "[br/]", false, HaloTextHelper.getColorWhite())
-        return
+        if not quiet then HaloTextHelper.addTextWithArrow(player, "No empty mags on you", "[br/]", false, HaloTextHelper.getColorWhite()) end
+        return 0
     end
 
     local stashRecs = {}       -- everything staged into main pockets -> goes back after
@@ -189,18 +190,22 @@ local function topOff(player)
     end
 
     if queued == 0 then
-        HaloTextHelper.addTextWithArrow(player, "No loose rounds anywhere on you to fill mags", "[br/]", false, HaloTextHelper.getColorRed())
-        player:Say("No loose rounds on me to top off mags.")
+        if not quiet then
+            HaloTextHelper.addTextWithArrow(player, "No loose rounds anywhere on you to fill mags", "[br/]", false, HaloTextHelper.getColorRed())
+            player:Say("No loose rounds on me to top off mags.")
+        end
         -- nothing queued but rounds may have been staged for a partial caliber -- return them
         if #stashRecs > 0 then pcall(function() ISTimedActionQueue.add(ISEmpireStashBack:new(player, stashRecs)) end) end
     else
         HaloTextHelper.addTextWithArrow(player, "Topping off " .. queued .. " mag(s) - " .. filled .. " rounds", "[br/]", false, HaloTextHelper.getColorGreen())
-        player:Say("Topping off " .. queued .. " magazines.")
+        if not quiet then player:Say("Topping off " .. queued .. " magazines.") end
         if #stashRecs > 0 then
             pcall(function() ISTimedActionQueue.add(ISEmpireStashBack:new(player, stashRecs)) end)
         end
     end
+    return queued
 end
+EmpireQoL_TopOffMags = topOff   -- 17_PreTripRestock queues it after restocking (returns the number of mags queued)
 
 -- ---- triggers: Numpad 8, plus a right-click option on guns/mags ----
 Events.OnKeyPressed.Add(function(key)

@@ -94,6 +94,17 @@ function EmpireSortConfig.isExcludedContainer(cont)
             if af:find(sub, 1, true) then return true end
         end
     end
+    -- (c) EmpireProduction nodes: the node's container holds its own inputs and outputs. Never scan,
+    -- evict or magnet them, and keep them out of the base index; EmpireQoL 16_AutoProduction feeds
+    -- and collects them explicitly. (Without this the sorter pulled a node's inputs back out.)
+    local isNode = false
+    pcall(function()
+        local parent = cont:getParent()
+        local md = parent and parent:getModData()
+        local node = md and md.EmpireProd
+        isNode = node ~= nil and node.recipe ~= nil
+    end)
+    if isNode then return true end
     return false
 end
 

@@ -119,6 +119,62 @@ local function runTests()
             and type(s:getNumChasingZombies()) == "number" and type(s:getNumVeryCloseZombies()) == "number")
     end)
 
+    -- T2c: the event-driven chores (14_ needs, 15_ farm, 16_ production, 17_ restock) are registered on the
+    -- 10-minute beat, and every vanilla entry point / Java enum they lean on resolves in THIS build. A FAIL
+    -- here names the exact chore (or symbol) that would otherwise just silently do nothing.
+    do
+        local reg = {}
+        pcall(function() for _, c in ipairs(EmpireAutoChores.chores) do reg[c.name] = c.order end end)
+        for _, name in ipairs({ "needs", "unload", "sort", "loot", "farm", "production", "restock" }) do
+            check("chore." .. name, reg[name] ~= nil, reg[name] and ("order " .. reg[name]) or "not registered -> that automation is dead")
+        end
+        check("chore.helpers", EmpireAutoChores ~= nil and type(EmpireAutoChores.m) == "function"
+            and type(EmpireAutoChores.fetch) == "function" and type(EmpireAutoChores.carriedContainers) == "function"
+            and type(EmpireAutoChores.baseContainers) == "function" and type(EmpireAutoChores.noteLoot) == "function")
+        check("chore.base.peek", type(EmpireBaseCache) == "table" and type(EmpireBaseCache.peek) == "function"
+            and type(EmpireBaseCache.containersFor) == "function", "restock's just-left-base catch-up needs EmpireBaseCache.peek")
+        check("chore.topoff.export", type(EmpireQoL_TopOffMags) == "function", "restock cannot top the mags off")
+        check("chore.production.registry", type(EmpireProd) == "table" and type(EmpireProd.registry) == "function"
+            and type(EmpireProd.nodeOnSquare) == "function" and type(EmpireProd.countType) == "function",
+            "EmpireProduction core without the node registry -> production nodes never feed")
+        check("chore.sorter.excludesNodes", type(EmpireSortConfig) == "table" and type(EmpireSortConfig.isExcludedContainer) == "function",
+            "production-node containers must be excluded or the sorter pulls their inputs back out")
+        -- vanilla entry points the chores call (functions / classes), resolved by dotted path like T1b
+        for _, path in ipairs({
+            "ISInventoryPaneContextMenu.eatItem", "ISInventoryPaneContextMenu.onDrinkFluid", "ISInventoryPaneContextMenu.getContainers",
+            "HandcraftLogic.new",
+            "ISFarmingMenu.walkToPlant", "ISFarmingMenu.getWaterUsesInteger",
+            "ISHarvestPlantAction.new", "ISWaterPlantAction.new", "ISEquipWeaponAction.new",
+            "ISLoadBulletsInMagazine.new",
+        }) do
+            local v = resolve(path)
+            check("chore.api." .. path, type(v) == "function" or type(v) == "table")
+        end
+        -- Java-exposed enums / singletons: just must be non-nil
+        for _, path in ipairs({
+            "CharacterStat.HUNGER", "CharacterStat.THIRST", "MoodleType.FOOD_EATEN",
+            "FluidCategory.Beverage",
+            "CFarmingSystem.instance", "RainManager",
+        }) do
+            check("chore.sym." .. path, resolve(path) ~= nil)
+        end
+        -- ItemTag.CAN_OPENER is NOT referenced anywhere in vanilla 42.22.2 Lua, so 14_AutoNeeds detects an opener by
+        -- tag first, then by item type name (TinOpener / CanOpener). Only a WARN: sealed cans then rely on the name.
+        if resolve("ItemTag.CAN_OPENER") == nil then
+            print("[EmpireTest] WARN chore.sym.ItemTag.CAN_OPENER -- absent; auto-needs finds the can opener by item type name instead")
+        end
+        pcall(function()
+            local fs = CFarmingSystem and CFarmingSystem.instance
+            check("chore.farm.registry", fs ~= nil and type(fs.getLuaObjectCount) == "function" and type(fs.getLuaObjectByIndex) == "function",
+                "auto-farm walks the vanilla plant registry through these two calls")
+        end)
+        pcall(function()
+            local st = getSpecificPlayer(0):getStats()
+            check("chore.stats.hungerThirst", type(st:get(CharacterStat.HUNGER)) == "number" and type(st:get(CharacterStat.THIRST)) == "number",
+                "auto-needs reads hunger/thirst through Stats:get(CharacterStat.X)")
+        end)
+    end
+
     -- T3: the five Papa Humvee craft recipes are registered
     local recipes = { "Empire_M998_MakeBullBar", "Empire_M998_MakeM2Armor",
         "Empire_M998_MakeTurretArmor", "Empire_M998_MakeMuffler",

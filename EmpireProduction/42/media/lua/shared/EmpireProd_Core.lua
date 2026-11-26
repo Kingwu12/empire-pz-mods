@@ -40,6 +40,40 @@ EP.recipes["planks"] = {
     output = "Base.Plank",
 }
 
+-- ---- registry of nodes (persisted in ModData, like 40_RoofPlumbing) ----
+-- Lets a chore find every node without scanning tiles: key "x,y,z" -> true. Nodes set up before this
+-- existed are adopted the first time their menu is opened. A key whose square is loaded but holds no node any
+-- more is dropped by the chore that walks the registry.
+EP.REG_KEY = "EmpireProdNodes"
+function EP.registry() return ModData.getOrCreate(EP.REG_KEY) end
+function EP.keyFor(obj)
+    local sq = nil
+    pcall(function() sq = obj:getSquare() end)
+    if not sq then return nil end
+    return sq:getX() .. "," .. sq:getY() .. "," .. sq:getZ()
+end
+function EP.register(obj)
+    local k = EP.keyFor(obj)
+    if k then EP.registry()[k] = true end
+    return k
+end
+function EP.unregister(obj)
+    local k = EP.keyFor(obj)
+    if k then EP.registry()[k] = nil end
+end
+-- the object on a square that is a production node (has a recipe), or nil
+function EP.nodeOnSquare(sq)
+    if not sq then return nil end
+    local objs = sq:getObjects()
+    for i = 0, objs:size() - 1 do
+        local o = objs:get(i)
+        local md = o.getModData and o:getModData()
+        local node = md and md.EmpireProd
+        if node and node.recipe and o.getContainer and o:getContainer() then return o end
+    end
+    return nil
+end
+
 function EP.nowHours()
     local gt = getGameTime()
     return (gt and gt:getWorldAgeHours()) or 0
@@ -66,6 +100,8 @@ local function inputSets(container, recipe)
     end
     return sets or 0
 end
+
+EP.countType, EP.inputSets = countType, inputSets
 
 local function removeN(container, ftype, n)
     local found = {}

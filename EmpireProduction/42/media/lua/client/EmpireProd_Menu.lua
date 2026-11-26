@@ -40,6 +40,7 @@ local function setupNode(playerObj, obj, recipeId)
     local md = obj:getModData()
     md.EmpireProd = { recipe = recipeId, lastHour = EP.nowHours() }
     pcall(function() obj:transmitModData() end)
+    pcall(function() EP.register(obj) end)   -- the AutoProduction chore finds nodes through this registry
     local r = EP.recipes[recipeId]
     halo(playerObj, "Production set: " .. (r and r.name or recipeId), true)
 end
@@ -51,6 +52,7 @@ end
 
 local function stopNode(playerObj, obj)
     pcall(function() EP.resolve(obj) end)   -- settle pending before stopping
+    pcall(function() EP.unregister(obj) end)
     local md = obj:getModData()
     md.EmpireProd = nil
     pcall(function() obj:transmitModData() end)
@@ -74,7 +76,16 @@ local function onFill(player, context, worldobjects)
         -- status as a non-clickable info line
         local info = sub:addOption(EP.status(obj) or "Status", nil, nil)
         info.notAvailable = true
+        pcall(function() EP.register(obj) end)   -- adopt nodes set up before the registry existed
         sub:addOption("Collect now", playerObj, function() collect(playerObj, obj) end)
+        -- auto-feed: the crew keeps this node stocked from base storage and files what it makes
+        -- (EmpireQoL 16_AutoProduction). Default on; switch it off here to run this node by hand.
+        local manual = node.manual == true
+        sub:addOption(manual and "Auto-feed: OFF (click to turn on)" or "Auto-feed: ON (click to turn off)", playerObj, function()
+            node.manual = (not manual) or nil
+            pcall(function() obj:transmitModData() end)
+            halo(playerObj, node.manual and "Auto-feed off for this node." or "Auto-feed on for this node.", not node.manual)
+        end)
         sub:addOption("Stop production", playerObj, function() stopNode(playerObj, obj) end)
     else
         local opt = context:addOption("Set up production", nil, nil)

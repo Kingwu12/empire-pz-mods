@@ -46,6 +46,17 @@ Load order: EmpireAmmo after `ammo_smelting` and `GunFighter`. EmpireQoL's M998 
 
 **Performance:** one handler on `Events.EveryTenMinutes` (about 25 real seconds at the default day length). No per-frame handler of any kind. Each beat checks cheap guards first (alive, not driving, not asleep, no timed action running, no zombie visible/chasing/very close) and does one heavy chore at most. Looting never runs while the pack is full. An auto sort that takes more than 250 ms lengthens the cooldown (it is one synchronous frame), and every auto sort prints its duration to the console, so check `console.txt` for `[EmpireAutoChores] auto-sort took` after the first play session. A chore that throws three beats in a row switches itself off and says so. Settings are at the top of the file. **Numpad 5** is the master switch (saved per character). Favourite (star) anything you want to keep carrying; equipped, holstered and "Keep this bag" items are never moved.
 
+### Event-driven chores (27 Nov 2026): eating, farming, production and kit
+
+Four more chores on the same 10-minute beat (details, settings and the full untested-in-game list: `docs/AUTOMATION-JOBS-2026-11-26.md`):
+
+- **Needs (`14_AutoNeeds.lua`):** hungry or thirsty, he eats or drinks from what he carries, and inside the base from base stock (food closest to spoiling first, never favourites, rotten, burnt, frozen or alcohol; sealed cans are opened with a can opener fetched from the base).
+- **Farm (`15_AutoFarm.lua`):** inside a painted farm zone he harvests ripe plants, then waters thirsty ones (tainted water first). No tile scan: it walks vanilla's plant registry.
+- **Production (`16_AutoProduction.lua`):** EmpireProduction nodes are fed from base storage and their output is filed by the sorter. Per node switch in the node's right-click menu ("Auto-feed").
+- **Restock (`17_PreTripRestock.lua`):** the guns in his hands and on his hotbar get 3 spare mags and 40 rounds from base storage in the base, when he boards a vehicle there, and a beat after he leaves.
+
+Each can be switched off in the CONFIG block at the top of its file, all of them with **Numpad 5**. `EmpireSortAll.run(player, opts)` gained `carriedOnly` (deposit-only fast path, used by the auto sort), `sources`, `noCarried`, `itemFilter` and `quiet`; the keys and menus pass no opts and behave as before.
+
 Supporting changes: `EmpireZones.version` plus a cache in `EmpireBases.getEmpireZoneBase` (it used to walk every painted tile on every `activeBase()` call); `EmpireSortAll.run(player)` and `EmpireQoL_Vacuum({auto=true})` are the public entry points.
 
 ## Tools
@@ -54,9 +65,9 @@ Supporting changes: `EmpireZones.version` plus a cache in `EmpireBases.getEmpire
 
 ## Testing
 
-`tests/chores/` holds Lua mock tests (run with a pure-JS Lua VM, no game needed): the auto-chores beat logic and the zone-base cache. See its README. They check logic against mocked globals, not the real engine.
+`tests/chores/` holds Lua mock tests (run with a pure-JS Lua VM, no game needed): the auto-chores beat logic, the zone-base cache, and each chore (needs, farm, production, restock) plus the sorter's new options. See its README. They check logic against mocked globals, not the real engine.
 
-**In game:** there is no automated end-to-end suite. **EmpireQoL's `49_AutoTest.lua`** runs at game start and on Numpad 9: it asserts the vanilla API surface, Empire globals, recipe registration and core pipelines, printing one PASS/FAIL line per check to the game console. Most debugging in this repo's history is done by reading `console.txt` output from telemetry prints.
+**In game:** there is no automated end-to-end suite. **EmpireQoL's `49_AutoTest.lua`** runs at game start and on Numpad 9: it asserts the vanilla API surface, Empire globals, recipe registration, core pipelines and that every auto-chore is registered with its vanilla entry points present, printing one PASS/FAIL line per check to the game console. Most debugging in this repo's history is done by reading `console.txt` output from telemetry prints.
 
 ## Key bindings (from code)
 

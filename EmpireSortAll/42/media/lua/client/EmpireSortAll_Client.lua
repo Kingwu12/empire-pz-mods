@@ -826,6 +826,21 @@ local function countByCat(cont)
     return counts
 end
 
+-- Carried-only runs (the automation beat, D1) reuse per-container category counts for a short while.
+-- The counts only seed "which general box already holds what" filing hints, so a value a few seconds
+-- old merely nudges which shelf takes the next deposit. Full sorts (F9) always count fresh.
+-- The whole table is dropped once it is older than CBC_TTL_MS, and a container a sort touched is dropped
+-- at the end of that sort.
+local CBC_TTL_MS = 30000
+local _cbc, _cbcAt = {}, 0
+local function countByCatCached(cont)
+    local now = getTimestampMs()
+    if (now - _cbcAt) > CBC_TTL_MS then _cbc = {}; _cbcAt = now end
+    local c = _cbc[cont]
+    if not c then c = countByCat(cont); _cbc[cont] = c end
+    return c
+end
+
 -- storage ItemContainers of a SPECIFIC vehicle (trunk/bed/seats/glovebox). Parts without
 -- storage are skipped. Verified vs vanilla: getPartCount/getPartByIndex, VehiclePart:getItemContainer.
 local function vehicleStorageContainers(veh)
@@ -849,6 +864,18 @@ local function smartSort(player, opts)
     opts = opts or {}
 
     _catCache = {}   -- fresh category cache for this sort run (perf: classify each item once)
+    -- AUTOMATION OPTIONS (EmpireQoL chores; none of them is set by the keys or menus, so F9 is unchanged):
+    --   carriedOnly : a DEPOSIT only. File what is carried (or opts.sources) into homes; skip eviction, over-cap
+    --                 shed, magnet, rot purge (PASS A), floor pickup (PASS B), placed-can restock and the
+    --                 consolidate pass. This is what the 10-minute beat needs and none of the base-wide work.
+    --   sources     : list of containers whose items are filed as if carried (a production node's output).
+    --   noCarried   : do not touch the survivor's own inventory (use with sources).
+    --   itemFilter  : function(item) -> true for the items that may move (sources/carried alike).
+    --   quiet       : no "already in order" / "no storage" chatter (implied by carriedOnly).
+    local carriedOnly = opts.carriedOnly == true
+    local quiet = opts.quiet == true or carriedOnly
+    local srcConts = {}   -- containers handed in via opts.sources (a delivery, not the survivor's pack)
+    local countOf = carriedOnly and countByCatCached or countByCat
     -- VEHICLE UNLOAD sweeps the BASE footprint (you stand outside by the truck, not in base).
     -- Use the painted EmpireZone base if there is one, ELSE fall back to the registered base
     -- rectangle (KS/SSC-seeded) so the unload still targets base storage instead of the street.
@@ -892,15 +919,17 @@ local function smartSort(player, opts)
         print("[EmpireSort XFER] containers per floor: " .. table.concat(parts, " "))
     end
     if #stores == 0 then
-        HaloTextHelper.addTextWithArrow(player, "No storage nearby to sort", "[br/]", false, HaloTextHelper.getColorRed())
-        player:Say("No storage close enough to sort.")
+        if not quiet then
+            HaloTextHelper.addTextWithArrow(player, "No storage nearby to sort", "[br/]", false, HaloTextHelper.getColorRed())
+            player:Say("No storage close enough to sort.")
+        end
         return
     end
 
     -- Fallout-style base pool: when you're standing in a defined base, F9 swept the
     -- WHOLE base (collectStorages handled the area). Surface which base so it's visible.
     local _activeBase = (EmpireBases and EmpireBases.activeBase and EmpireBases.activeBase(player)) or nil
-    if _activeBase then
+    if _activeBase and not quiet then
         HaloTextHelper.addTextWithArrow(player, "BASE SORT: " .. (_activeBase.name or "Main") .. " (" .. #stores .. " containers)", "[br/]", false, HaloTextHelper.getColorGreen())
     end
 
@@ -934,7 +963,7 @@ local function smartSort(player, opts)
             else
                 st.designated = false
                 local hc = {}
-                for cat in pairs(countByCat(st.c)) do hc[cat] = true end
+                for cat in pairs(countOf(st.c)) do hc[cat] = true end
                 -- ROOM-SMART DEFAULT: a general box inherits its room's preferred
                 -- categories as a SOFT filing hint (kitchen->food, bedroom->clothes,
                 -- garage->tools...). We only ADD to homeCats so loose items flow here;
@@ -999,7 +1028,7 @@ local function smartSort(player, opts)
     for _, st in ipairs(stores) do
         if not st.designated then
             generals[#generals+1] = st.c
-            for cat, n in pairs(countByCat(st.c)) do
+            for cat, n in pairs(countOf(st.c)) do
                 if not mostOf[cat] or n > mostOf[cat].n then mostOf[cat] = { cont = st.c, n = n } end
             end
         end
@@ -1036,10 +1065,22 @@ local function smartSort(player, opts)
     end
 
     -- free weight (headroom) of a container -- drives load-sharing + the overfill guard.
+    -- Memoised for this run: byFreeDesc / byFillFirst call it from inside sort comparators for every
+    -- placement. The memo only orders candidates; placeInto re-checks the real capacity before any move.
+    -- Every container a move touches is dropped from the memo (freeDirty).
+    local _freeMemo = {}
     local function freeOf(c)
+        local v = _freeMemo[c]
+        if v ~= nil then return v end
         local mx, cur = capOf(c, player), 0
         pcall(function() cur = c:getCapacityWeight() end)
-        return (mx or 0) - safeNum(cur or 0, 0)
+        v = (mx or 0) - safeNum(cur or 0, 0)
+        _freeMemo[c] = v
+        return v
+    end
+    local function freeDirty(a, b)
+        if a then _freeMemo[a] = nil end
+        if b then _freeMemo[b] = nil end
     end
     -- copy + sort emptiest-first so items SPREAD across same-category containers instead
     -- of cramming the first one to the brim. Never mutates the input list.
@@ -1124,7 +1165,7 @@ local function smartSort(player, opts)
     -- PLACED CANS are exempt: their contents are hand-curated (grenades in the grenade
     -- box classify as Explosives, mags as parts...) -- evicting emptied them every sort.
     for _, st in ipairs(stores) do
-        if st.designated and not st.placedAmmo then
+        if (not carriedOnly) and st.designated and not st.placedAmmo then
             local items = st.c:getItems()
             local snap = {}
             for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
@@ -1154,7 +1195,7 @@ local function smartSort(player, opts)
     --   * TAGGED boxes -> shed as MAGNET moves so overflow only goes to ANOTHER tagged
     --     home of the same category; if none has room it stays put. This stops overflow
     --     landing in a general box that the (1b) magnet pass would just yank back (thrash).
-    for _, st in ipairs(stores) do
+    for _, st in ipairs(carriedOnly and {} or stores) do
         local mx, cur = capOf(st.c, player), 0
         pcall(function() cur = st.c:getCapacityWeight() end)
         cur = safeNum(cur, 0)
@@ -1209,7 +1250,7 @@ local function smartSort(player, opts)
             coldCatOf[st.c] = cat
         end
     end
-    for _, st in ipairs(stores) do
+    for _, st in ipairs(carriedOnly and {} or stores) do
         local items = st.c:getItems()
         local snap = {}
         for i = 0, items:size() - 1 do snap[#snap+1] = items:get(i) end
@@ -1280,7 +1321,20 @@ local function smartSort(player, opts)
             if sub and sub ~= cont then addCarried(sub, depth + 1, subWorn) end
         end
     end
-    pcall(function() addCarried(player:getInventory(), 0) end)
+    if not opts.noCarried then pcall(function() addCarried(player:getInventory(), 0) end) end
+    -- DELIVERY SOURCES (opts.sources): containers whose items are filed like carried loot, e.g. the output
+    -- sitting in a production node. They are never destinations (the caller's containers are excluded from
+    -- the store scan) and the survivor's gun-loadout rule does not apply to them.
+    if opts.sources then
+        for _, sc in ipairs(opts.sources) do
+            if sc then srcConts[sc] = true; pcall(function() addCarried(sc, 0) end) end
+        end
+    end
+    local function passesFilter(it)
+        if not opts.itemFilter then return true end
+        local ok, r = pcall(opts.itemFilter, it)
+        return ok and r == true
+    end
 
     -- VEHICLE UNLOAD (right-click vehicle -> "Transfer loot to base"): pull loot from the
     -- SPECIFIC vehicle you clicked (opts.vehicle) into base homes. addCarried recurses into
@@ -1355,7 +1409,8 @@ local function smartSort(player, opts)
                         swWornNames[#swWornNames + 1] = nm
                     end
                 end
-                if not isProtected(it) and not isLoadoutItem(it) and not wornKit then
+                if not isProtected(it) and not (isLoadoutItem(it) and not srcConts[cont]) and not wornKit and passesFilter(it)
+                   and not (carriedOnly and isRottenItem(it)) then   -- a deposit-only run has no rot purge: never shelve rot with fresh food
                     if isBag then
                         -- loose EMPTY bags (garbage/paper bag, spare duffel) are clutter ->
                         -- file them like any item. A bag with stuff inside is left so its
@@ -1428,7 +1483,7 @@ local function smartSort(player, opts)
                 end)
                 if fits then
                     local ok = pcall(function() dest:addItem(item); fromCont:Remove(item) end)
-                    if ok then touched[dest] = true; touched[fromCont] = true; return dest end
+                    if ok then touched[dest] = true; touched[fromCont] = true; freeDirty(dest, fromCont); return dest end
                 end
             end
         end
@@ -1508,7 +1563,7 @@ local function smartSort(player, opts)
     -- container type) plus anything manually tagged "Compost". st.compost covers both.
     local compostBins = {}
     for _, st in ipairs(stores) do
-        if st.compost then compostBins[#compostBins+1] = st end
+        if st.compost and not carriedOnly then compostBins[#compostBins+1] = st end
     end
     -- v19.10: NEVER trust hasRoomFor on composters. A live composter reported
     -- cached weight -1.0 with 444 items inside (java dirty-cache sentinel);
@@ -1581,6 +1636,7 @@ local function smartSort(player, opts)
                 if not dst then break end
                 local ok = pcall(function() dst.c:addItem(it); cb.c:Remove(it) end)
                 if ok then
+                    freeDirty(dst.c, cb.c)
                     local w = itemW(it)
                     usedCache[dst] = usedCache[dst] + w
                     usedCache[cb] = usedCache[cb] - w
@@ -1603,7 +1659,7 @@ local function smartSort(player, opts)
     -- depositing food. Dumping logs shouldn't make the sorter rummage every fridge for rot.
     -- v19.10: always purge rot. The old empty-handed/food-sort gate meant rot
     -- lingered across every carry-sort, reading as "compost doesn't work".
-    local doRotten = true
+    local doRotten = not carriedOnly   -- a deposit-only run leaves rot, compost routing and the floor to the full tidy
     for _, st in ipairs(stores) do
         if doRotten and not st.compost then   -- never pull rotten OUT of any compost home
             local its = st.c:getItems()
@@ -1622,6 +1678,7 @@ local function smartSort(player, opts)
                             st.c:Remove(it)
                         end)
                         if ok then
+                            freeDirty(cb.c, st.c)
                             placed = true
                             usedCache[cb] = usedCache[cb] + itemW(it)
                             rottenComposted = rottenComposted + 1
@@ -1639,7 +1696,7 @@ local function smartSort(player, opts)
                                 dropSq:AddWorldInventoryItem(it, 0, 0, 0)
                                 st.c:Remove(it)
                             end)
-                            if ok then rottenDumped = rottenDumped + 1; touched[st.c] = true end
+                            if ok then rottenDumped = rottenDumped + 1; touched[st.c] = true; freeDirty(st.c) end
                         end
                     end
                 end
@@ -1652,7 +1709,7 @@ local function smartSort(player, opts)
     -- PASS A's pile isn't re-shelved) and favourited/equipped items. Uses the exact detach
     -- sequence from the game's own ISGrabItemAction so nothing dupes or vanishes.
     local floorSorted, floorLeft = 0, 0
-    for _, fi in ipairs(collectFloorItems(player)) do
+    for _, fi in ipairs(carriedOnly and {} or collectFloorItems(player)) do
         local it, wo, sq = fi.item, fi.wo, fi.sq
         local rotFloor = it and isRottenItem(it) and not isProtected(it)
         if rotFloor then
@@ -1674,6 +1731,7 @@ local function smartSort(player, opts)
                     cb.c:addItem(it)
                 end)
                 if ok then
+                    freeDirty(cb.c)
                     floorSorted = floorSorted + 1
                     rottenComposted = rottenComposted + 1
                     usedCache[cb] = usedCache[cb] + itemW(it)
@@ -1705,6 +1763,7 @@ local function smartSort(player, opts)
                             dest:addItem(it)
                         end)
                         if ok then
+                            freeDirty(dest)
                             placed = true
                             floorSorted = floorSorted + 1
                             byCat[cat] = (byCat[cat] or 0) + 1
@@ -1723,6 +1782,7 @@ local function smartSort(player, opts)
     local contN = 0
     for c in pairs(touched) do
         contN = contN + 1
+        _cbc[c] = nil   -- what this sort moved changes the container's category counts
         pcall(function() c:setDrawDirty(true) end)
         -- refresh the WORLD graphic the same way the game does on a manual transfer:
         -- ItemPicker.updateOverlaySprite on the container's parent object. Without this a
@@ -1759,7 +1819,7 @@ local function smartSort(player, opts)
     -- carry-scope gate so dumping logs never reshuffles the armoury. The can's own
     -- isItemAllowed still applies -- a 9mm case only ever pulls 9mm.
     local canRestocked = 0
-    do
+    if not carriedOnly then
         local srcByCat = {}
         local function sourcesFor(cat)
             if srcByCat[cat] then return srcByCat[cat] end
@@ -1811,6 +1871,7 @@ local function smartSort(player, opts)
                         if fits then
                             local ok2 = pcall(function() st2.c:addItem(rec.it); rec.from:Remove(rec.it) end)
                             if ok2 then
+                                freeDirty(st2.c, rec.from)
                                 canRestocked = canRestocked + 1
                                 touched[st2.c] = true; touched[rec.from] = true
                                 rec.it = nil
@@ -1948,7 +2009,7 @@ local function smartSort(player, opts)
         player:Say("Non-food's stuck in the cold with no shelf to take it. Tag a crate and F9 again.")
     elseif rottenDumped > 0 then
         player:Say("Cleared " .. rottenDumped .. " rotten item(s) out to the floor.")
-    else
+    elseif not quiet then
         HaloTextHelper.addTextWithArrow(player, "Nothing to move - already sorted", "[br/]", false, HaloTextHelper.getColorGreen())
         player:Say("Storage's already in order.")
     end
@@ -2384,11 +2445,15 @@ Events.OnKeyPressed.Add(onKeyPressed)
 -- Returns true when the sort ran without throwing. Never called per frame: the caller is a
 -- low-frequency, event-driven chore, not a poll of this file.
 EmpireSortAll = EmpireSortAll or {}
-function EmpireSortAll.run(player)
+-- opts (all optional, see smartSort): carriedOnly, sources, noCarried, itemFilter, quiet. With carriedOnly the
+-- base-wide consolidate pass is skipped too. No opts = the old behaviour exactly.
+function EmpireSortAll.run(player, opts)
     player = player or getSpecificPlayer(0)
     if not player or player:isDead() then return false end
-    local ok1 = pcall(smartSort, player)
-    local ok2 = pcall(consolidateTypes, player)
+    opts = opts or {}
+    local ok1 = pcall(smartSort, player, opts)
+    local ok2 = true
+    if not opts.carriedOnly then ok2 = pcall(consolidateTypes, player) end
     if EmpireBaseCache and EmpireBaseCache.invalidate then EmpireBaseCache.invalidate() end
     if EmpireSortAll.refreshUI then pcall(EmpireSortAll.refreshUI) end
     return ok1 and ok2
