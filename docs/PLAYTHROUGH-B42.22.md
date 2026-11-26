@@ -12,7 +12,9 @@ Performance comes first in every choice below. Ratings are *risk of frame-time c
 
 ## 2. Launch config (`ProjectZomboid64.json`)
 
-Current file (set 28 Jun): fixed 8 GB heap, ZGC, no JFR. Process memory runs well above the heap (5.3-7.6 GB RSS with a 4 GB heap in one author's tests), so an 8 GB heap on a 16 GB PC with Windows, Discord and a browser invites paging.
+State on 26 Nov (read from the PC): Steam has overwritten the 28 Jun tuning, so the file is **stock again: `-Xmx3072m`, ZGC, no `-Xms`**. The old 8 GB heap was too big anyway: process memory runs well above the heap (5.3-7.6 GB RSS with a 4 GB heap in one author's tests), so 8 GB on a 16 GB PC with Windows, Discord and a browser invites paging.
+
+**One command re-applies the target after any update** (idempotent, keeps a backup, close the game first): `tools\apply-jvm-tuning.ps1` in this repo (`-Check` only reports). It was tested on a copy of the real file; the file itself has not been changed yet.
 
 - Keep every stock argument. Keep `-XX:+UseZGC` (it is already generational on the bundled Java 25; do **not** add `-XX:+ZGenerational`).
 - Change the heap to `-Xms2048m -Xmx6144m`. Raise to 7168 only if a GC log shows the live set above ~60-70% of 6 GB, or `OutOfMemoryError` / ZGC "Allocation Stall" lines.
@@ -81,8 +83,8 @@ Empire mods load **last**. Risk is frame-time risk.
 
 | Mod | Status | Note |
 |---|---|---|
-| EmpireQoL | Enable | The self-test (`49_AutoTest.lua`, Numpad 9) now also checks every vanilla function we call or wrap (new T1b block) and prints the game version. Run it first on a new save. Vehicle Quick repair / Quick replace need a real vehicle test. |
-| EmpireSortAll | Enable | Test against Better Sorting. |
+| EmpireQoL | Enable | **New: `13_AutoChores.lua`** (auto corpse looting, auto sort at base, auto park + unload at the dock; Numpad 5 switch; one 10-minute beat, no per-frame handler; see README). Base-zone lookup cached, right-click width formula fixed for 42.22, FindItem's permanent per-frame handler removed. The self-test (`49_AutoTest.lua`, Numpad 9) now also checks every vanilla function we call or wrap (new T1b block) and prints the game version. Run it first on a new save. Vehicle Quick repair / Quick replace need a real vehicle test. |
+| EmpireSortAll | Enable | Now also called by auto-chores (`EmpireSortAll.run`, `.transferVehicle`). Test against Better Sorting. Watch `[EmpireAutoChores] auto-sort took N ms` in the console after the first session. |
 | EmpireZones | Enable | |
 | EmpireProduction | Enable | |
 | EmpireAmmoDrop | Enable | Uses `OnZombieDead`; no signature change found in the notes. |

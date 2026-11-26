@@ -2380,4 +2380,34 @@ local function onKeyPressed(key)
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 
+-- Public entry for automation (EmpireQoL 13_AutoChores). Same two passes as Numpad3, one call.
+-- Returns true when the sort ran without throwing. Never called per frame: the caller is a
+-- low-frequency, event-driven chore, not a poll of this file.
+EmpireSortAll = EmpireSortAll or {}
+function EmpireSortAll.run(player)
+    player = player or getSpecificPlayer(0)
+    if not player or player:isDead() then return false end
+    local ok1 = pcall(smartSort, player)
+    local ok2 = pcall(consolidateTypes, player)
+    if EmpireBaseCache and EmpireBaseCache.invalidate then EmpireBaseCache.invalidate() end
+    if EmpireSortAll.refreshUI then pcall(EmpireSortAll.refreshUI) end
+    return ok1 and ok2
+end
+
+-- Same as right-click vehicle -> "Empire: Transfer loot to base", callable by automation.
+-- Counts the truck's items first and does nothing below minItems, so a spare tire and a toolbox
+-- never trigger a whole-base sort. Returns the number of items that were in the truck (0 = skipped).
+function EmpireSortAll.transferVehicle(player, veh, minItems)
+    player = player or getSpecificPlayer(0)
+    if not player or player:isDead() or not veh then return 0 end
+    local n = 0
+    for _, c in ipairs(vehicleStorageContainers(veh)) do
+        pcall(function() n = n + c:getItems():size() end)
+    end
+    if n == 0 or n < (minItems or 1) then return 0 end
+    local ok = pcall(onTransferVehicleToBase, player, veh)
+    if EmpireSortAll.refreshUI then pcall(EmpireSortAll.refreshUI) end
+    return ok and n or 0
+end
+
 print("[EmpireSortAll] Smart Sort v19.11 loaded. CAN RESTOCK: placed cans now PULL matching stock from cabinets/shelves until full (PRIMARY-marked never raided). Denormal-weight crash fixed. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")

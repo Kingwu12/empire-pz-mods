@@ -91,7 +91,20 @@ end
 
 -- Read OUR painted Empire Zones "base" zone as a rectangle + floor range. This is
 -- the highlight-based base that replaces external markers (KS/SSC).
+-- 42.22 pass: this walked EVERY tile of EVERY base zone on each call, and activeBase() calls it
+-- every time (BaseCache, SmartSort, vehicle dock check, the AutoChores beat...). A big painted
+-- base is thousands of tiles. The result only changes when a zone is edited, so cache it against
+-- EmpireZones.version (bumped by every mutator in EmpireZones_Core). Falls back to recomputing
+-- every call if the version counter is missing (older EmpireZones).
+local _zbCache, _zbVer, _zbHave = nil, nil, false
+
 function EmpireBases.getEmpireZoneBase()
+    local ver = EmpireZones and EmpireZones.version
+    if ver ~= nil and _zbHave and _zbVer == ver then
+        if not _zbCache then return nil end
+        local c = {}; for k, v in pairs(_zbCache) do c[k] = v end   -- callers may annotate the table
+        return c
+    end
     local out
     pcall(function()
         if not EmpireZones or not EmpireZones.all or not EmpireZones.parseKey then return end
@@ -110,9 +123,15 @@ function EmpireBases.getEmpireZoneBase()
         end
         if x1 then out = { x1 = x1, x2 = x2, y1 = y1, y2 = y2, z = z1, zmin = z1, zmax = z2 } end
     end)
-    if out and EmpireBases.validBounds(out) then return out end
-    return nil
+    local result = (out and EmpireBases.validBounds(out)) and out or nil
+    if ver ~= nil then _zbCache, _zbVer, _zbHave = result, ver, true end
+    if not result then return nil end
+    local c = {}; for k, v in pairs(result) do c[k] = v end
+    return c
 end
+
+-- A new game / loaded save swaps the ModData under us: drop the cache.
+Events.OnGameStart.Add(function() _zbCache, _zbVer, _zbHave = nil, nil, false end)
 
 -- The registered bases. Seeds "Main" from a painted base zone, else SSC.
 function EmpireBases.list()

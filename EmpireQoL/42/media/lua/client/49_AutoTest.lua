@@ -53,8 +53,7 @@ local function runTests()
         "ISInventoryPaneContextMenu.getContainers", "ISInventoryPaneContextMenu.onFix",
         "ISInventoryTransferAction.perform",
         "ISLoadBulletsInMagazine.new", "ISModalDialog.new", "ISTextBox.new",
-        "ISReloadManager.startReloadFromUi",
-        "ISTimedActionQueue.add", "ISTimedActionQueue.getTimedActionQueue",
+        "ISTimedActionQueue.add", "ISTimedActionQueue.getTimedActionQueue", "ISTimedActionQueue.isPlayerDoingAction",
         "ISVehicleMechanics.doPartContextMenu",
         "ISVehicleMenu.getVehicleToInteractWith", "ISVehicleMenu.onStartEngine",
         "ISVehiclePartMenu.onInstallPart", "ISVehiclePartMenu.onUninstallPart",
@@ -63,6 +62,7 @@ local function runTests()
         "ModData.getOrCreate",
     }
     local optional = {
+        "ISReloadManager.startReloadFromUi", -- absent from vanilla 42.22.2 Lua (checked); 35_ReloadFromGear guards it
         "ISCraftAction.perform",          -- B41-era; BaseCache wraps it only if present
         "ISCraftingUI.new",               -- Craft Helper UI (EmpireCraftFix)
         "ISVehicleTuning2.getContainers", -- tsarslib / ATA tuning UI
@@ -98,6 +98,26 @@ local function runTests()
         end
     end)
     check("feature.globals", #empireGlobals > 0, #empireGlobals .. " Empire globals: " .. table.concat(empireGlobals, ", "))
+
+    -- T2b: the automation chain (13_AutoChores -> Vacuum + SmartSort) is wired end to end
+    check("auto.chores.module", type(EmpireAutoChores) == "table" and type(EmpireAutoChores.state) == "table",
+        EmpireAutoChores and (EmpireAutoChores.state.on and "ON" or "OFF (Numpad 5)") or "13_AutoChores not loaded")
+    check("auto.sort.entry", type(EmpireSortAll) == "table" and type(EmpireSortAll.run) == "function",
+        "EmpireSortAll.run (Smart Sort + consolidate) missing -> auto-sort is dead")
+    check("auto.sort.uiRefresh", type(EmpireSortAll) == "table" and type(EmpireSortAll.refreshUI) == "function")
+    check("auto.unload.entry", type(EmpireSortAll) == "table" and type(EmpireSortAll.transferVehicle) == "function",
+        "EmpireSortAll.transferVehicle missing -> auto-unload at the dock is dead")
+    check("auto.vehicle.events", Events ~= nil and Events.OnEnterVehicle ~= nil and Events.OnExitVehicle ~= nil)
+    check("auto.dock.check", type(EmpireBases) == "table" and type(EmpireBases.vehicleNearBase) == "function")
+    check("auto.loot.entry", type(EmpireQoL_Vacuum) == "function", "EmpireQoL_Vacuum missing -> auto-loot is dead")
+    check("auto.base.registry", type(EmpireBases) == "table" and type(EmpireBases.activeBase) == "function")
+    check("auto.zones.version", type(EmpireZones) == "table" and type(EmpireZones.version) == "number",
+        "EmpireZones.version missing -> getEmpireZoneBase falls back to walking every tile on each call")
+    pcall(function()
+        local s = getSpecificPlayer(0):getStats()
+        check("auto.stats.zombieCounts", type(s:getNumVisibleZombies()) == "number"
+            and type(s:getNumChasingZombies()) == "number" and type(s:getNumVeryCloseZombies()) == "number")
+    end)
 
     -- T3: the five Papa Humvee craft recipes are registered
     local recipes = { "Empire_M998_MakeBullBar", "Empire_M998_MakeM2Armor",

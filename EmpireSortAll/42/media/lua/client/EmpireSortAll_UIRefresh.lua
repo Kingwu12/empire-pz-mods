@@ -44,6 +44,10 @@ local function onTick()
 end
 Events.OnTick.Add(onTick)
 
+-- Same refresh for automated sorts (EmpireSortAll.run): arm the countdown, no key needed.
+EmpireSortAll = EmpireSortAll or {}
+function EmpireSortAll.refreshUI() ticksLeft = 2 end
+
 local function onKeyPressed(key)
     if key == Keyboard.KEY_NUMPAD3 then
         local p = getSpecificPlayer(0)

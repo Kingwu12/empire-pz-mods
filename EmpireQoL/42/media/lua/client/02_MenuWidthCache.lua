@@ -16,12 +16,18 @@
 -- EVERY mod's context menu. Fully reversible: delete this file.
 
 local measureCache = {}   -- [font] -> { [labelString] = widthPixels }
+local arrowCache = {}     -- [font] -> width of the ">" submenu arrow
 
 local function install()
     if EMPIRE_MENU_WIDTH_FIX then return end
     if type(ISContextMenu) ~= "table" then return end
     EMPIRE_MENU_WIDTH_FIX = true
 
+    -- 42.22.2 pass: vanilla's width formula changed (icon-aware: it reserves room for the
+    -- option icon and the ">" arrow, and reads self.itemHgt). Verified against the real
+    -- 42.22.2 ISContextMenu.lua (calcWidth at ~line 616). The old override returned
+    -- maxWidth + 64, which would clip icons / text on 42.22. The loop below is the same
+    -- cached measurement; only the final formula mirrors vanilla exactly.
     function ISContextMenu:calcWidth()
         local tm = getTextManager()
         local font = self.font
@@ -37,7 +43,15 @@ local function install()
             end
             if w > maxWidth then maxWidth = w end
         end
-        return math.max(maxWidth + 24 + 40, 100)
+        local arrowW = arrowCache[font]
+        if arrowW == nil then
+            arrowW = tm:MeasureStringX(font, ">")
+            arrowCache[font] = arrowW
+        end
+        local iconSize = (self.itemHgt or 0) - 12
+        local iconShiftX = 2
+        local textForIconShift = iconSize + iconShiftX * 2 + 2
+        return math.max(textForIconShift + maxWidth + 24 + arrowW + 4, 100)
     end
 
     print("[EmpireQoL] Context-menu width cache installed -- right-click no longer re-measures every option N^2 times. THIS is the lag fix.")

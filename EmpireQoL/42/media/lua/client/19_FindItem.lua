@@ -13,6 +13,7 @@ local FIND_KEY     = Keyboard.KEY_NUMPAD2   -- numpad 2 = find item in base (Num
 
 local litObjects = {}         -- objects we've lit up
 local clearAt    = nil        -- timestamp to auto-clear at
+local armClear               -- forward decl: arms the expiry handler only while highlights are lit
 local activeMatch = nil       -- function(item)->bool while a find is live; tints matching rows in any open container
 
 -- D: clear the green row-tint inside any open loot/inventory window
@@ -187,6 +188,7 @@ local function doFind(player, query)
     player:Say(string.format("Found %d. Nearest: %d in a %s, %d tiles %s.", total, nr.n, (nr.ct ~= "" and nr.ct or "container"), nr.dist, nr.dir))
 
     clearAt = getTimestampMs() + HIGHLIGHT_MS
+    if armClear then armClear() end
     pcall(applyHighlightToOpen)
 end
 
@@ -241,6 +243,7 @@ local function locateTypes(player, wantTypes, label)
     local nr = spots[1]
     player:Say(string.format("Found %d %s. Nearest: %d in a %s, %d tiles %s.", total, label, nr.n, (nr.ct ~= "" and nr.ct or "container"), nr.dist, nr.dir))
     clearAt = getTimestampMs() + HIGHLIGHT_MS
+    if armClear then armClear() end
     pcall(applyHighlightToOpen)
 end
 
@@ -457,10 +460,20 @@ end
 -- onFillInv kept intact above -- re-register this one line to restore the options.
 -- Events.OnFillInventoryObjectContextMenu.Add(onFillInv)
 
+-- 42.22 perf pass: this used to be a permanent per-frame OnTick handler. It now exists only
+-- while a find highlight is lit (armed by the two places that set clearAt) and removes itself
+-- once the highlights are cleared, so an idle game pays nothing for it.
+local tickArmed = false
 local function onTick()
-    if clearAt and getTimestampMs() >= clearAt then pcall(clearHighlights) end
+    if not clearAt then
+        Events.OnTick.Remove(onTick); tickArmed = false
+        return
+    end
+    if getTimestampMs() >= clearAt then pcall(clearHighlights) end   -- sets clearAt=nil; removed next tick
 end
-Events.OnTick.Add(onTick)
+armClear = function()
+    if not tickArmed then tickArmed = true; Events.OnTick.Add(onTick) end
+end
 
 -- D: every time a loot/inventory window finishes refreshing (open a container,
 -- switch tab, proximity remerge), re-tint the rows matching the live find.

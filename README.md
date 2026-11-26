@@ -13,7 +13,7 @@ Each top-level `Empire*/` folder is one standalone mod. "B42" means the mod has 
 
 | Mod | Layout | What it does |
 |---|---|---|
-| **EmpireQoL** | B42 | The largest mod. Base registry and live material cache; craft/build and vehicle mechanics drawing materials from nearby base storage; one-click vehicle **Quick repair** and **Quick replace** from base stock (with Vehicle Repair Overhaul integration); corpse vacuum; find item in base; top off magazines; reload from worn gear; no sleep confirmation; delete item; remove un-openable safes; roof-collector plumbing; vehicle unstick; KI5 M998 Humvee part compatibility; context-menu width cache (right-click freeze fix); server-side loot buffs for ammo and residential guns; an in-game self-test (`49_AutoTest.lua`). |
+| **EmpireQoL** | B42 | The largest mod. Base registry and live material cache; craft/build and vehicle mechanics drawing materials from nearby base storage; one-click vehicle **Quick repair** and **Quick replace** from base stock (with Vehicle Repair Overhaul integration); corpse vacuum; **auto-chores** (hands-free corpse looting and smart sort at base, below); find item in base; top off magazines; reload from worn gear; no sleep confirmation; delete item; remove un-openable safes; roof-collector plumbing; vehicle unstick; KI5 M998 Humvee part compatibility; context-menu width cache (right-click freeze fix); server-side loot buffs for ammo and residential guns; an in-game self-test (`49_AutoTest.lua`). |
 | **EmpireSortAll** | B42 | One-button smart sort of inventory into nearby containers by category; containers can be locked to a category from the world right-click menu. |
 | **EmpireZones** | B42 | Paint freeform, multi-floor base/work zones (base, farm, guard, workshop, storage), persisted in the save. |
 | **EmpireProduction** | B42 | Accrual-based automation: a container becomes a production node that converts inputs to outputs over game time. Recipes are data. |
@@ -36,9 +36,27 @@ Each top-level `Empire*/` folder is one standalone mod. "B42" means the mod has 
 
 Load order: EmpireAmmo after `ammo_smelting` and `GunFighter`. EmpireQoL's M998 script overrides (`42/media/scripts/vehicles/`) assume it loads after the M998 Humvee mod when that is used.
 
+## Auto-chores (26 Nov 2026): the sorting and small things, hands-free
+
+`EmpireQoL/.../13_AutoChores.lua` presses the two keys King used to press every trip:
+
+- **Auto-loot:** something died, zombies are gone, corpses are in reach and the worn pack has room: Corpse Vacuum runs once per fight (a kill counter on `OnZombieDead` re-arms it, so quiet beats scan nothing).
+- **Auto-park:** you leave a vehicle within 8 tiles of the painted base: engine and headlights go off (a parked car's lights drain the battery), and on the next beat the truck is unloaded into base storage if it holds 6+ items (same action as right-click vehicle > "Transfer loot to base").
+- **Auto-sort:** you are inside the painted base and carrying loot you did not have at the last sort (5+ new items, or anything auto-looted): Smart Sort + consolidate runs.
+
+**Performance:** one handler on `Events.EveryTenMinutes` (about 25 real seconds at the default day length). No per-frame handler of any kind. Each beat checks cheap guards first (alive, not driving, not asleep, no timed action running, no zombie visible/chasing/very close) and does one heavy chore at most. Looting never runs while the pack is full. An auto sort that takes more than 250 ms lengthens the cooldown (it is one synchronous frame), and every auto sort prints its duration to the console, so check `console.txt` for `[EmpireAutoChores] auto-sort took` after the first play session. A chore that throws three beats in a row switches itself off and says so. Settings are at the top of the file. **Numpad 5** is the master switch (saved per character). Favourite (star) anything you want to keep carrying; equipped, holstered and "Keep this bag" items are never moved.
+
+Supporting changes: `EmpireZones.version` plus a cache in `EmpireBases.getEmpireZoneBase` (it used to walk every painted tile on every `activeBase()` call); `EmpireSortAll.run(player)` and `EmpireQoL_Vacuum({auto=true})` are the public entry points.
+
+## Tools
+
+- `tools/apply-jvm-tuning.ps1`: re-applies the heap setting (`-Xms2048m -Xmx6144m`) after a Steam update overwrites `ProjectZomboid64.json`. Idempotent, keeps a backup, `-Check` to look only.
+
 ## Testing
 
-There is no out-of-game test suite. **EmpireQoL's `49_AutoTest.lua`** runs at game start and on Numpad 9: it asserts the vanilla API surface, Empire globals, recipe registration and core pipelines, printing one PASS/FAIL line per check to the game console. Most debugging in this repo's history is done by reading `console.txt` output from telemetry prints.
+`tests/chores/` holds Lua mock tests (run with a pure-JS Lua VM, no game needed): the auto-chores beat logic and the zone-base cache. See its README. They check logic against mocked globals, not the real engine.
+
+**In game:** there is no automated end-to-end suite. **EmpireQoL's `49_AutoTest.lua`** runs at game start and on Numpad 9: it asserts the vanilla API surface, Empire globals, recipe registration and core pipelines, printing one PASS/FAIL line per check to the game console. Most debugging in this repo's history is done by reading `console.txt` output from telemetry prints.
 
 ## Key bindings (from code)
 
@@ -46,6 +64,7 @@ There is no out-of-game test suite. **EmpireQoL's `49_AutoTest.lua`** runs at ga
 |---|---|---|
 | Numpad 2 | EmpireQoL | Find item in base |
 | Numpad 3 | EmpireSortAll | Smart sort |
+| Numpad 5 | EmpireQoL | Auto-chores on/off |
 | Numpad 7 | EmpireQoL | Corpse vacuum |
 | Numpad 8 | EmpireQoL | Top off magazines |
 | Numpad 9 | EmpireQoL | Run self-test |

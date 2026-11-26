@@ -6,6 +6,11 @@
 !/Empire*/
 # docs hold no mod.info, so the game ignores the folder when this repo sits in mods/
 !/docs/
+# mock Lua tests (no mod.info, so the game ignores the folder)
+!/tests/
+!/tools/
+node_modules/
+package*.json
 
 # ...but the EmpireLean.txt preset + its backups are config, not code:
 EmpireLean.txt

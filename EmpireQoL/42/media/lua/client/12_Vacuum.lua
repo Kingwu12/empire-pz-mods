@@ -119,26 +119,30 @@ local function corpsesNear(player)
     return out
 end
 
-local function doVacuum()
+-- opts.auto = called by 13_AutoChores: stay silent when there is nothing to do (no halo spam
+-- every poll). Returns grabbed, full (full = at least one item did not fit) so the caller can
+-- back off while the pack is full.
+local function doVacuum(opts)
+    local auto = type(opts) == "table" and opts.auto == true
     local player = getSpecificPlayer(0)
-    if not player or player:isDead() then return end
+    if not player or player:isDead() then return 0, false end
 
     local s = player:getStats()
     if s:getNumChasingZombies() > 0 or s:getNumVeryCloseZombies() > 0 then
-        HaloTextHelper.addTextWithArrow(player, "Not now - zombies on you", "[br/]", false, HaloTextHelper.getColorRed())
-        return
+        if not auto then HaloTextHelper.addTextWithArrow(player, "Not now - zombies on you", "[br/]", false, HaloTextHelper.getColorRed()) end
+        return 0, false
     end
 
     local bag = getBagContainer(player)
     if not bag then
-        HaloTextHelper.addTextWithArrow(player, "No backpack equipped - equip a bag to vacuum loot", "[br/]", false, HaloTextHelper.getColorRed())
-        return
+        if not auto then HaloTextHelper.addTextWithArrow(player, "No backpack equipped - equip a bag to vacuum loot", "[br/]", false, HaloTextHelper.getColorRed()) end
+        return 0, false
     end
 
     local conts = corpsesNear(player)
     if #conts == 0 then
-        HaloTextHelper.addTextWithArrow(player, "No corpses in reach", "[br/]", false, HaloTextHelper.getColorWhite())
-        return
+        if not auto then HaloTextHelper.addTextWithArrow(player, "No corpses in reach", "[br/]", false, HaloTextHelper.getColorWhite()) end
+        return 0, false
     end
 
     -- gather every worthwhile item across all corpses, tag each with its value tier
@@ -175,19 +179,23 @@ local function doVacuum()
 
     if grabbed > 0 then
         HaloTextHelper.addTextWithArrow(player, "Looted " .. grabbed .. " items into your pack from " .. #conts .. " corpses", "[br/]", false, HaloTextHelper.getColorGreen())
-        player:Say("Stripped " .. grabbed .. " bodies' worth. F9 to sort it.")
+        if not auto then player:Say("Stripped " .. grabbed .. " bodies' worth. F9 to sort it.") end
         if full then
             HaloTextHelper.addTextWithArrow(player, "Backpack full - empty it and F1 again", "[br/]", false, HaloTextHelper.getColorRed())
         end
     elseif full then
         HaloTextHelper.addTextWithArrow(player, "Backpack full - nothing grabbed", "[br/]", false, HaloTextHelper.getColorRed())
-    else
+    elseif not auto then
         HaloTextHelper.addTextWithArrow(player, "Nothing worth taking on these corpses", "[br/]", false, HaloTextHelper.getColorWhite())
     end
+    return grabbed, full
 end
 
+-- Public entry for 13_AutoChores (and anything else): doVacuum({auto=true}) -> grabbed, full.
+EmpireQoL_Vacuum = doVacuum
+
 local function onKeyPressed(key)
-    if key == Keyboard.KEY_NUMPAD7 then pcall(doVacuum) end
+    if key == Keyboard.KEY_NUMPAD7 then pcall(doVacuum, nil) end
 end
 Events.OnKeyPressed.Add(onKeyPressed)
 

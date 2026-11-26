@@ -10,6 +10,11 @@ local EZ = EmpireZones
 
 EZ.TYPES = { "base", "farm", "guard", "workshop", "storage" }
 
+-- Bumped by every mutator below. Readers that derive something expensive from the tiles
+-- (EmpireBases.getEmpireZoneBase walks every tile of every base zone) cache it against this
+-- number instead of recomputing on each call. Mutate zones only through these functions.
+EZ.version = 0
+
 local function store()
     local d = ModData.getOrCreate("EmpireZones")
     d.zones = d.zones or {}
@@ -39,12 +44,14 @@ function EZ.newZone(name, ztype)
     local id = tostring(d.nextId)
     d.nextId = d.nextId + 1
     d.zones[id] = { id = id, name = name or ("Zone " .. id), type = ztype or "base", tiles = {} }
+    EZ.version = EZ.version + 1
     return id
 end
 
 function EZ.addTile(id, x, y, z)
     local zone = EZ.get(id); if not zone then return end
     zone.tiles[EZ.key(x, y, z)] = true
+    EZ.version = EZ.version + 1
 end
 
 function EZ.addBlock(id, cx, cy, z, r)
@@ -54,6 +61,7 @@ end
 function EZ.removeTile(id, x, y, z)
     local zone = EZ.get(id); if not zone then return end
     zone.tiles[EZ.key(x, y, z)] = nil
+    EZ.version = EZ.version + 1
 end
 
 function EZ.zoneAt(x, y, z)
@@ -64,7 +72,7 @@ function EZ.zoneAt(x, y, z)
     return nil
 end
 
-function EZ.delete(id) store().zones[tostring(id)] = nil end
+function EZ.delete(id) store().zones[tostring(id)] = nil; EZ.version = EZ.version + 1 end
 
 -- iterate a zone's tiles as numbers: EZ.forEachTile(zone, function(x,y,z) end)
 function EZ.forEachTile(zone, fn)
