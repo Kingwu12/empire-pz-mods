@@ -2,6 +2,8 @@
 
 Performance comes first in every choice below. Ratings are *risk of frame-time cost*, from mod pages, comments and source where we could read it. **Nothing here is measured on the Ryzen 5 3600 / RTX 3060 PC.** The bake-off at the bottom is how we measure it.
 
+**Ready to play? Start with [`PLAY-READY.md`](PLAY-READY.md): the decisions made from this research and the one command (`tools/ready-to-play.ps1`) that checks the pack.**
+
 ## 1. Version facts
 
 - **Build 43 does not exist.** No date, no beta. It is the build meant to add vanilla human NPCs. Until then, NPCs are mods.
@@ -85,10 +87,11 @@ Section 5 is the 16-mod third-party core. King's actual preset is `EmpireStable`
 
 | Preset (copy into `Zomboid/mods/`) | Mods | Use |
 |---|---|---|
-| [`presets/EmpireB42-22.txt`](presets/EmpireB42-22.txt) | 165 | KEEP + TEST. The full pack minus the cuts and replaced items. Start here if you want the whole pack. |
+| [`presets/EmpirePlay.txt`](presets/EmpirePlay.txt) | 169 | **The chosen one.** The full pack plus the 7 additions (Bandits NPC, NPC Crew, VB_CommonSense, Evolving Traits World, H.E.C.U. B42, two KI5 patches). Needs those subscribed first; see [`PLAY-READY.md`](PLAY-READY.md). |
+| [`presets/EmpireB42-22.txt`](presets/EmpireB42-22.txt) | 163 | KEEP + TEST with what is installed today: no NPCs, old Common Sense stays out. Works without any new subscription. |
 | [`presets/EmpireB42-22-lean.txt`](presets/EmpireB42-22-lean.txt) | 35 | KEEP only, no heavy content packs. The performance baseline and the bake-off control. |
 
-- **Verdicts:** KEEP 37 (updated on or after 28 Sep, the first build that throws on missing recipes and fluids; maintained; light), TEST 124 (plausible but unverified on 42.22.2), CUT 12 after my amendment, REPLACE 7. Every one of the 53 pre-July ids is TEST at best; none is KEEP.
+- **Verdicts:** KEEP 37 (updated on or after 28 Sep, the first build that throws on missing recipes and fluids; maintained; light), TEST 127 (plausible but unverified on 42.22.2), CUT 13 after my amendment and the Tank Water cut, REPLACE 7. Every one of the 53 pre-July ids is TEST at best; none is KEEP.
 - **Cut:** Knox Survivors + EmpireKSTune (Java loader, 1-2 s freezes in Nov), ProximityInventory (duplicates EmpireQoL and fights EmpireSortAll), Check Around (deprecated), SwapIt (needs errorMagnifier, absent), AutoMechanics (duplicate of Better Auto Mechanics), UBPropFix, P4OnTheDoor, Military_Tool_Kit (orphan, 31 MB), Erika's Furniture Store (author says outdated map), Unified Carry Weight Framework (idle), FE_CommonSensePatch (removed from Workshop).
 - **Replace (subscribe first, then add the line):** Common Sense -> [VB_CommonSense 3750253491](https://steamcommunity.com/sharedfiles/filedetails/?id=3750253491) (the old one throws on the Alcohol fluid since 42.21; drop ReloadAllMagazines with it); More Traits Legacy -> [Evolving Traits World 2914075159](https://steamcommunity.com/sharedfiles/filedetails/?id=2914075159); H.E.C.U. -> 3737864976 (same mod id); Simple Flashlight on Belt -> 3625933422 or just drop it. Ids to add are listed at the end of the audit.
 - **Neat Crafting / Neat Building are TEST, not cut.** The worker cut them for "fighting the Empire hooks", but `44_CraftFromBase` has shims written for those panels and they are the windows in use. Batch crafting regressed in November, so test bulk ammo crafting early.

@@ -1,0 +1,192 @@
+# One command to get Project Zomboid ready for the Empire run (B42.22.2).
+#   .\tools\ready-to-play.ps1           stage everything, then print READY or the exact list of what is missing
+#   .\tools\ready-to-play.ps1 -Check    only report, change nothing
+# Run in PowerShell on the PC, game CLOSED. Safe to run again at any time (idempotent), and run it
+# again after every Steam update of the game (Steam resets the JVM heap) and after subscribing to mods.
+#
+# What it does:
+#   1. JVM heap: -Xms2048m -Xmx6144m (calls apply-jvm-tuning.ps1; Steam overwrites that file on updates).
+#   2. Presets: copies docs\presets\*.txt into Zomboid\mods (the folder the in-game preset list reads).
+#   3. Sandbox preset EmpirePlay: a copy of your empire.cfg with zombie population Low, because NPC mods
+#      cost more the more zombies exist. Your empire.cfg is never touched.
+#   4. Checks the chosen preset (default EmpirePlay) against what is installed: every mod present, every
+#      required mod present and loaded BEFORE the mod that needs it, no mod id installed twice.
+#   5. If everything checks out it makes EmpirePlay the default mod list for new games (backup kept).
+# Needs nothing outside Windows PowerShell 5.1. Plain ASCII on purpose.
+param(
+    [switch]$Check,
+    [string]$Preset = 'EmpirePlay',
+    [string]$ZomboidDir = (Join-Path $env:USERPROFILE 'Zomboid')
+)
+$ErrorActionPreference = 'Stop'
+$repo      = Split-Path $PSScriptRoot -Parent
+$presetSrc = Join-Path $repo 'docs\presets'
+$modsDir   = Join-Path $ZomboidDir 'mods'
+$problems  = New-Object System.Collections.ArrayList
+function Say($m)  { Write-Host $m }
+function Bad($m)  { [void]$problems.Add($m); Write-Host "  [!!] $m" -ForegroundColor Yellow }
+function Good($m) { Write-Host "  [ok] $m" -ForegroundColor Green }
+
+# ---- game + Steam library ------------------------------------------------------------------
+$roots = @()
+$steam = (Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath
+if ($steam) {
+    $roots += $steam
+    $vdf = Join-Path $steam 'steamapps\libraryfolders.vdf'
+    if (Test-Path $vdf) {
+        Select-String -Path $vdf -Pattern '"path"\s+"([^"]+)"' | ForEach-Object { $roots += ($_.Matches[0].Groups[1].Value -replace '\\\\', '\') }
+    }
+}
+$lib = $null
+foreach ($r in ($roots | Select-Object -Unique)) { if (Test-Path (Join-Path $r 'steamapps\common\ProjectZomboid\ProjectZomboid64.json')) { $lib = $r; break } }
+Say "== Project Zomboid"
+if (-not $lib) { throw "Could not find the game in any Steam library." }
+$workshop = Join-Path $lib 'steamapps\workshop\content\108600'
+Good "game in $lib"
+if (Get-Process ProjectZomboid64 -ErrorAction SilentlyContinue) {
+    if ($Check) { Bad "the game is running (fine for -Check, but close it before staging)" }
+    else { throw "Project Zomboid is running. Close it, then run this again." }
+}
+
+# ---- 1. JVM heap ---------------------------------------------------------------------------
+Say "== JVM heap"
+$jvm = Join-Path $PSScriptRoot 'apply-jvm-tuning.ps1'
+if ($Check) { & $jvm -Check } else { & $jvm }
+$jsonPath = Join-Path $lib 'steamapps\common\ProjectZomboid\ProjectZomboid64.json'
+if ((Get-Content -Raw $jsonPath) -notmatch '"-Xmx6144m"') { if ($Check) { Bad "heap is still stock (run without -Check to apply 6 GB)" } }
+else { Good "heap is -Xms2048m -Xmx6144m" }
+
+# ---- installed mods index ------------------------------------------------------------------
+Say "== Installed mods"
+$index = @{}        # mod id -> list of @{ Item=...; Req=@(...) }
+function Read-Mods($root, $tag) {
+    if (-not (Test-Path -LiteralPath $root)) { return }
+    $root = (Resolve-Path -LiteralPath $root).ProviderPath
+    foreach ($f in (Get-ChildItem -LiteralPath $root -Recurse -Filter mod.info -File -ErrorAction SilentlyContinue)) {
+        $id = $null; $req = @(); $inc = @()
+        foreach ($line in [System.IO.File]::ReadAllLines($f.FullName)) {
+            if ($line -match '^\s*id\s*=\s*(.+?)\s*$') { $id = $Matches[1] -replace '^\d+/', '' }
+            elseif ($line -match '^\s*incompatible\s*=\s*(.+?)\s*$') {
+                $inc += ($Matches[1] -split '[,;]' | ForEach-Object { ($_.Trim().TrimStart('\') -replace '^\d+/', '') } | Where-Object { $_ })
+            }
+            elseif ($line -match '^\s*require\s*=\s*(.+?)\s*$') {
+                $req += ($Matches[1] -split '[,;]' | ForEach-Object { ($_.Trim().TrimStart('\') -replace '^\d+/', '') } | Where-Object { $_ })
+            }
+        }
+        if (-not $id) { continue }
+        $item = $tag
+        if ($tag -eq 'workshop') { $item = 'workshop:' + ($f.FullName.Substring($root.Length).TrimStart('\') -split '\\')[0] }
+        if (-not $index.ContainsKey($id)) { $index[$id] = New-Object System.Collections.ArrayList }
+        [void]$index[$id].Add(@{ Item = $item; Req = $req; Inc = $inc })
+    }
+}
+Read-Mods $workshop 'workshop'
+Read-Mods $modsDir 'local'
+Read-Mods (Join-Path $ZomboidDir 'Workshop') 'zomboid-workshop'
+Good ("{0} mod ids found (Steam Workshop + local mods)" -f $index.Count)
+# Workshop items we swapped for a maintained one (26 Nov audit): old item id -> new item id
+$replacedItems = @{ '3452711271' = '3737864976' }   # H.E.C.U. (B41 listing) -> H.E.C.U. B42.20, same mod id
+foreach ($old in $replacedItems.Keys) {
+    $new = $replacedItems[$old]
+    if ((Test-Path (Join-Path $workshop $old)) -and -not (Test-Path (Join-Path $workshop $new))) {
+        Bad "H.E.C.U.: only the old Workshop item is installed. Subscribe https://steamcommunity.com/sharedfiles/filedetails/?id=$new then unsubscribe https://steamcommunity.com/sharedfiles/filedetails/?id=$old"
+    }
+}
+$dupes = @($index.Keys | Where-Object { @($index[$_] | ForEach-Object { $_.Item } | Select-Object -Unique).Count -gt 1 })
+
+# Workshop ids for the "subscribe to these" list: audit table + the mods added on 26 Nov
+$wsId = @{ VB_CommonSense = '3750253491'; EvolvingTraitsWorld = '2914075159'; H_E_C_U = '3737864976'; Bandits2 = '3268487204';
+           NPCCrew = '3800132623'; KI5PerfPatch = '3808100388'; KI5GeneralFixes = '3789366983' }
+$auditCsv = Join-Path $presetSrc 'pack-audit.csv'
+if (Test-Path $auditCsv) { foreach ($r in (Import-Csv $auditCsv)) { if (-not $wsId.ContainsKey($r.mod_id)) { $wsId[$r.mod_id] = $r.workshop_id } } }
+
+function Read-Preset($file) {
+    @([System.IO.File]::ReadAllLines($file) | ForEach-Object { if ($_ -match '^\s*mod\s*=\s*(.+?),?\s*$') { $Matches[1].Trim() } })
+}
+# NPC Crew needs Bandits2 even before either is installed
+$knownReq = @{ NPCCrew = @('Bandits2') }
+
+function Test-Preset($name, $isTarget) {
+    $file = Join-Path $presetSrc ($name + '.txt')
+    if (-not (Test-Path $file)) { if ($isTarget) { Bad "preset $name.txt not found in docs\presets" }; return $null }
+    $mods = Read-Preset $file
+    Say ("== Preset {0} ({1} mods)" -f $name, $mods.Count)
+    $pos = @{}; for ($i = 0; $i -lt $mods.Count; $i++) { $pos[$mods[$i]] = $i }
+    $missing = @($mods | Where-Object { -not $index.ContainsKey($_) })
+    $local = New-Object System.Collections.ArrayList
+    foreach ($m in $mods) {
+        if (-not $index.ContainsKey($m)) { continue }
+        $reqs = @($index[$m] | ForEach-Object { $_.Req } | Select-Object -Unique)
+        if ($knownReq.ContainsKey($m)) { $reqs += $knownReq[$m] }
+        foreach ($x in @($index[$m] | ForEach-Object { $_.Inc } | Select-Object -Unique)) {
+            if ($pos.ContainsKey($x)) { [void]$local.Add("$m is marked incompatible with $x (the game will refuse to enable one of them)") }
+        }
+        foreach ($r in $reqs) {
+            if (-not $pos.ContainsKey($r)) { [void]$local.Add("$m needs $r, which is not in the preset") }
+            elseif ($pos[$r] -gt $pos[$m]) { [void]$local.Add("$m is listed before $r, which it needs") }
+        }
+    }
+    $presetDupes = @($dupes | Where-Object { $pos.ContainsKey($_) })
+    $ok = $true
+    if ($missing.Count -gt 0) {
+        $ok = $false
+        $msg = "$($missing.Count) mod(s) not installed. Subscribe on Steam, then run this again:"
+        if ($isTarget) { Bad $msg } else { Say "  [--] $msg" }
+        foreach ($m in $missing) { Say ("         {0}  https://steamcommunity.com/sharedfiles/filedetails/?id={1}" -f $m, $wsId[$m]) }
+    }
+    foreach ($d in $presetDupes) {
+        $ok = $false
+        $items = ($index[$d] | ForEach-Object { $_.Item } | Select-Object -Unique) -join ' and '
+        $msg = "mod id $d is installed twice ($items). Unsubscribe the OLD Workshop item so only one remains."
+        if ($isTarget) { Bad $msg } else { Say "  [--] $msg" }
+    }
+    foreach ($l in $local) { $ok = $false; if ($isTarget) { Bad $l } else { Say "  [--] $l" } }
+    if ($ok) { Good "all mods installed, every requirement present and in order" }
+    return $ok
+}
+
+$state = @{}
+foreach ($f in (Get-ChildItem $presetSrc -Filter *.txt -ErrorAction SilentlyContinue)) {
+    $n = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+    $state[$n] = Test-Preset $n ($n -eq $Preset)
+}
+
+# ---- 2. stage presets + 3. sandbox preset --------------------------------------------------
+if (-not $Check) {
+    Say "== Staging"
+    foreach ($f in (Get-ChildItem $presetSrc -Filter *.txt)) {
+        $dest = Join-Path $modsDir $f.Name
+        if ((Test-Path $dest) -and ((Get-FileHash $dest).Hash -ne (Get-FileHash $f.FullName).Hash)) {
+            $bak = $dest + '.bak-empire'
+            if (-not (Test-Path $bak)) { Copy-Item $dest $bak }
+        }
+        Copy-Item $f.FullName $dest -Force
+    }
+    Good "presets copied to $modsDir"
+    $sbDir = Join-Path $ZomboidDir 'Sandbox Presets'
+    $src = Join-Path $sbDir 'empire.cfg'; $dst = Join-Path $sbDir 'EmpirePlay.cfg'
+    if (-not (Test-Path $src)) { Bad "Sandbox Presets\empire.cfg not found, so no EmpirePlay sandbox preset was made (pick settings by hand)" }
+    elseif (Test-Path $dst) { Good "sandbox preset EmpirePlay already exists (left as is)" }
+    else {
+        $t = [System.IO.File]::ReadAllText($src)
+        $t2 = [regex]::Replace($t, '(?m)^Zombies=\d+', 'Zombies=5')
+        [System.IO.File]::WriteAllText($dst, $t2, (New-Object System.Text.UTF8Encoding($false)))
+        Good "sandbox preset EmpirePlay created (your empire.cfg with zombie population Low)"
+    }
+    if ($state[$Preset] -eq $true) {
+        $def = Join-Path $modsDir 'default.txt'
+        if ((Test-Path $def) -and (-not (Test-Path ($def + '.bak-empire')))) { Copy-Item $def ($def + '.bak-empire') }
+        Copy-Item (Join-Path $presetSrc ($Preset + '.txt')) $def -Force
+        Good "$Preset is now the default mod list for new games"
+    }
+}
+
+# ---- verdict -------------------------------------------------------------------------------
+Say ""
+if ($problems.Count -eq 0 -and $state[$Preset] -eq $true) {
+    Write-Host "READY. In the game: New Game > Mods > preset $Preset (already ticked), Sandbox > preset EmpirePlay." -ForegroundColor Green
+    Say "First run: press Numpad 9 once and look for FAIL lines in console.txt ([EmpireTest])."
+} else {
+    Write-Host ("NOT READY YET: {0} thing(s) above need fixing." -f $problems.Count) -ForegroundColor Yellow
+    Say "Fix them (usually: subscribe on Steam and wait for the download), then run this script again."
+}
