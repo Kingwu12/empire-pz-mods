@@ -62,6 +62,7 @@ end
 local function moveToPlayer(it, from, playerInv, fetched)
     local ok = pcall(function() from:Remove(it); playerInv:addItem(it) end)
     if ok then
+        if EmpireAutoChores and EmpireAutoChores.hold then pcall(EmpireAutoChores.hold, it) end   -- taken from base: the auto sort leaves it on you
         local nm = "item"
         pcall(function() nm = it:getDisplayName() end)
         fetched[#fetched+1] = nm
@@ -371,6 +372,7 @@ local function installTuningQuartermaster()
                 if not got then break end
                 local ok2 = pcall(function() from:Remove(got); inv:addItem(got) end)
                 if not ok2 then break end
+                if EmpireAutoChores and EmpireAutoChores.hold then pcall(EmpireAutoChores.hold, got) end   -- taken from base: the auto sort leaves it on you
                 local nm = fullType or req.itemTag or "?"
                 pcall(function() nm = got:getDisplayName() end)
                 fetched[#fetched + 1] = nm

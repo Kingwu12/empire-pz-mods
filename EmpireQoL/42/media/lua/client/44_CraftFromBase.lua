@@ -142,6 +142,7 @@ function EmpireQoL_FetchForRecipe(playerObj, recipe, times)
             if got then
                 local ok = pcall(function() c:Remove(got); inv:addItem(got) end)
                 if ok then
+                    if EmpireAutoChores and EmpireAutoChores.hold then pcall(EmpireAutoChores.hold, got) end   -- taken from base: the auto sort leaves it on you
                     local nm = ft
                     pcall(function() nm = got:getDisplayName() end)
                     fetched[#fetched + 1] = nm

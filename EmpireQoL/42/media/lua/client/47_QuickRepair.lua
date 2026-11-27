@@ -63,6 +63,7 @@ local function pullFromBase(playerInv, ft, need, fetched)
         if not got then return false end
         local ok = pcall(function() from:Remove(got); playerInv:addItem(got) end)
         if not ok then return false end
+        if EmpireAutoChores and EmpireAutoChores.hold then pcall(EmpireAutoChores.hold, got) end   -- taken from base: the auto sort leaves it on you
         local nm = ft
         pcall(function() nm = got:getDisplayName() end)
         fetched[#fetched + 1] = nm
@@ -158,6 +159,7 @@ local function vroPullByTag(playerInv, tagName, fetched)
     if not got then return false end
     local ok2 = pcall(function() from:Remove(got); playerInv:addItem(got) end)
     if ok2 then
+        if EmpireAutoChores and EmpireAutoChores.hold then pcall(EmpireAutoChores.hold, got) end   -- taken from base: the auto sort leaves it on you
         local nm = tostring(tagName)
         pcall(function() nm = got:getDisplayName() end)
         fetched[#fetched + 1] = nm
