@@ -5,6 +5,7 @@ engine, so they do not replace booting the game and pressing Numpad 9 (AutoTest)
 
 ```bash
 npm i --no-save fengari   # once, anywhere on NODE_PATH, e.g. in this folder
+bash tests/chores/run_all.sh   # every test below, from the repo root; non-zero exit on any failure
 node runner.js ../../EmpireQoL/42/media/lua/client/13_AutoChores.lua chores_test.lua
 # chore tests: argv[2] = 13_AutoChores.lua, argv[3] = the test, argv[4..] = SRC2, SRC3, ... (module under test, then extras)
 node runner.js ../../EmpireQoL/42/media/lua/client/13_AutoChores.lua needs_test.lua ../../EmpireQoL/42/media/lua/client/14_AutoNeeds.lua
@@ -13,7 +14,9 @@ node runner.js ../../EmpireZones/42/media/lua/shared/EmpireZones_Core.lua zone_t
 ```
 
 - `chores_test.lua`: 13_AutoChores beat logic (chore registry and ordering, guards, cooldown,
-  pack-full back-off, circuit breaker, Numpad 5 toggle and persistence, leave-base edge).
+  pack-full back-off, circuit breaker, Numpad 5 toggle and persistence, leave-base edge), and the bug hunt
+  round 2 regressions: a stale park never unloads elsewhere; trips arm the arrival sort; held items
+  (quartermaster fetches, grabs off base shelves via the transfer hook, held bags) are never re-sorted.
 - `needs_test.lua` (14_AutoNeeds): thresholds, ranking, exclusions, portions, sealed cans, base stock, back-off.
 - `farm_test.lua` (15_AutoFarm): farm-zone gating, harvest then water, water source choice, rain, reach, re-tend.
 - `production_test.lua` (16_AutoProduction + the real `EmpireProd_Core.lua` and `EmpireSortAll_Config.lua`):
@@ -21,5 +24,6 @@ node runner.js ../../EmpireZones/42/media/lua/shared/EmpireZones_Core.lua zone_t
 - `restock_test.lua` (17_PreTripRestock): which guns, targets, nested bags, favourites, back-off, weight,
   base beat / vehicle boarding / just-left-base paths.
 - `sorter_test.lua` (EmpireSortAll_Client): `carriedOnly`, `sources`, `noCarried`, `itemFilter`, `quiet`,
-  capacity with the `freeOf` memo, category-count cache, and no-opts behaviour against the unpatched sorter.
+  capacity with the `freeOf` memo, category-count cache, no-opts behaviour against the unpatched sorter, and
+  `transferVehicle` returning the items that really left the truck (0 when no storage is in range).
 - `zone_test.lua`: EmpireBases.getEmpireZoneBase cache and EmpireZones.version invalidation.

@@ -182,6 +182,7 @@ local function loadSorter(src, name)
 end
 local cf, cerr = load(SRC2, "EmpireSortConfig"); assert(cf, cerr); cf()
 local runPatched, perr = loadSorter(SRC, "EmpireSortAll_Client"); assert(runPatched, perr)
+local SA_PATCHED = EmpireSortAll   -- the patched module table (transferVehicle); loading SRC3 replaces the global
 local runOrig = nil
 if type(SRC3) == "string" and #SRC3 > 0 then runOrig = loadSorter(SRC3, "EmpireSortAll_Client.orig") end
 
@@ -529,6 +530,32 @@ do
   expect("6 carriedOnly after 30 s recounts (hammer goes to g2, which really holds the tool)", count(g1, "Base.Hammer") == 0 and count(g2, "Base.Hammer") == 2, worldSig())
   g1, g2 = staleRun(nil, 5000)
   expect("6 a no-opts run always recounts, even with a fresh cache (hammer goes to g2)", count(g1, "Base.Hammer") == 0 and count(g2, "Base.Hammer") == 2, worldSig())
+end
+
+-- ======================================================================
+-- 7. transferVehicle returns what really LEFT the truck (bug hunt r2: with no base storage in range the
+--    auto-unload used to report "Unloaded the vehicle into base storage (N items)" for a truck it never touched)
+-- ======================================================================
+local function truckWith(nItems)
+  local trunk = cont("trunk", {cap = 500, ctype = "TruckBed"})
+  fillU(trunk, "Load", nItems, "Literature")
+  local part = obj({getItemContainer = trunk})
+  return obj({getPartCount = 1, getPartByIndex = part}), trunk
+end
+do
+  newWorld()   -- nothing to file into
+  local veh, trunk = truckWith(8)
+  local got = SA_PATCHED.transferVehicle(P, veh, 6)
+  expect("7 no storage in range: transferVehicle returns 0 and the truck keeps its load", got == 0 and #trunk.list == 8, tostring(got) .. " " .. worldSig())
+  newWorld(); store("shelf1", 12, 10, "shelves"); veh, trunk = truckWith(8)
+  got = SA_PATCHED.transferVehicle(P, veh, 6)
+  expect("7 storage in range: returns the 8 items that left the truck", got == 8 and #trunk.list == 0, tostring(got) .. " " .. worldSig())
+  newWorld(); store("shelf1", 12, 10, "shelves"); veh, trunk = truckWith(3)
+  expect("7 below minItems: skipped", SA_PATCHED.transferVehicle(P, veh, 6) == 0 and #trunk.list == 3)
+  newWorld(); store("shelf1", 12, 10, "shelves"); veh, trunk = truckWith(8)
+  local keep = trunk.list[1]
+  got = SA_PATCHED.transferVehicle(P, veh, 6, {itemFilter = function(it) return it ~= keep end})
+  expect("7 itemFilter: the held item stays in the truck, the count says 7", got == 7 and #trunk.list == 1 and trunk.list[1] == keep, tostring(got) .. " " .. worldSig())
 end
 
 realPrint(string.format("%d checks, %d failed", n, fails))

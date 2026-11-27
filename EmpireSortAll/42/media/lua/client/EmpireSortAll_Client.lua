@@ -2313,9 +2313,9 @@ end
 -- base. The semi never fits indoors, so we dock by proximity instead of "park inside".
 local DOCK_RADIUS = 8
 
-local function onTransferVehicleToBase(player, veh)
+local function onTransferVehicleToBase(player, veh, itemFilter)
     if not player or not veh then return end
-    pcall(function() smartSort(player, { vehicle = veh }) end)
+    pcall(function() smartSort(player, { vehicle = veh, itemFilter = itemFilter }) end)
     pcall(function() consolidateTypes(player) end)
     if EmpireBaseCache and EmpireBaseCache.invalidate then EmpireBaseCache.invalidate() end
 end
@@ -2461,18 +2461,43 @@ end
 
 -- Same as right-click vehicle -> "Empire: Transfer loot to base", callable by automation.
 -- Counts the truck's items first and does nothing below minItems, so a spare tire and a toolbox
--- never trigger a whole-base sort. Returns the number of items that were in the truck (0 = skipped).
-function EmpireSortAll.transferVehicle(player, veh, minItems)
+-- never trigger a whole-base sort. Returns the number of items that LEFT the truck (0 = skipped, or
+-- nothing moved: no base storage in range or all of it full, so the caller says nothing).
+-- opts.itemFilter (optional): function(item) -> true for the items that may move (truck and pack alike).
+-- items in a container; deep = also what is inside bags in it (a duffel in the trunk empties item by item)
+local function itemsIn(cont, deep, depth)
+    local n = 0
+    pcall(function()
+        local items = cont:getItems()
+        n = items:size()
+        if deep and depth < 3 then
+            for i = 0, items:size() - 1 do
+                local it = items:get(i)
+                if instanceof(it, "InventoryContainer") then
+                    local sub = it:getInventory()
+                    if sub and sub ~= cont then n = n + itemsIn(sub, true, depth + 1) end
+                end
+            end
+        end
+    end)
+    return n
+end
+local function vehicleItemCount(veh, deep)
+    local n = 0
+    for _, c in ipairs(vehicleStorageContainers(veh)) do n = n + itemsIn(c, deep, 0) end
+    return n
+end
+function EmpireSortAll.transferVehicle(player, veh, minItems, opts)
     player = player or getSpecificPlayer(0)
     if not player or player:isDead() or not veh then return 0 end
-    local n = 0
-    for _, c in ipairs(vehicleStorageContainers(veh)) do
-        pcall(function() n = n + c:getItems():size() end)
-    end
+    local n = vehicleItemCount(veh, false)
     if n == 0 or n < (minItems or 1) then return 0 end
-    local ok = pcall(onTransferVehicleToBase, player, veh)
+    local before = vehicleItemCount(veh, true)
+    local ok = pcall(onTransferVehicleToBase, player, veh, opts and opts.itemFilter or nil)
     if EmpireSortAll.refreshUI then pcall(EmpireSortAll.refreshUI) end
-    return ok and n or 0
+    if not ok then return 0 end
+    local moved = before - vehicleItemCount(veh, true)
+    return moved > 0 and moved or 0
 end
 
 print("[EmpireSortAll] Smart Sort v19.11 loaded. CAN RESTOCK: placed cans now PULL matching stock from cabinets/shelves until full (PRIMARY-marked never raided). Denormal-weight crash fixed. CAPACITY FIX: all limits now use EFFECTIVE (trait-adjusted) capacity like vanilla - Organized +30% respected, shelves fill to true cap, shed pass no longer drains them. Deposits always drain (emergency overflow, self-heals); composter auto-detect; PRIMARY homes; stable consolidate. Numpad3 = sort + consolidate (Numpad4 retired).")

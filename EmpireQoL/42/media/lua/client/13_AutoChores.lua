@@ -26,6 +26,19 @@
 -- protection: favourited, equipped and hotbar/holstered items and "Keep this bag" bags are never
 -- moved. Star (favourite) anything you want to keep carrying.
 --
+-- TRIPS AND HOLDS (27 Nov 2026, bug hunt round 2). The sort used to treat every item that arrived on
+-- him as loot, so a bag packed from the base shelves, or the quartermaster's hammer, planks and nails
+-- mid-build, were filed straight back; and a park at the dock stayed armed after he drove off, so the
+-- truck (and what he carried) were "unloaded" at the next stop. Now:
+--   * a TRIP starts after TRIP_BEATS beats outside the base. Only a trip arms the arrival sort and the
+--     dock unload; staying home, or a step out to the gate / dock / a perimeter wall, arms nothing.
+--   * items he takes from base storage are HELD (the quartermasters 44/45/47/48 and the vanilla
+--     transfer hook below mark them): an auto sort never moves them and they do not count as new loot.
+--     Holds end when a trip starts, so what is left of a trip is filed when he gets home.
+--   * a pending unload belongs to that truck at that dock: getting back into a vehicle drops it, an exit
+--     away from the dock drops it, and the beat re-checks the dock and that he is still home.
+-- Numpad 3 by hand still files everything (no holds).
+--
 -- Numpad 5 = master switch (saved per character). Config below.
 
 local CFG = {
@@ -43,6 +56,10 @@ local CFG = {
     PARK_ENABLED    = true,   -- engine + headlights off when you leave a vehicle at the dock
     SORT_SLOW_MS    = 250,    -- an auto sort slower than this lengthens the cooldown (hitch guard)
     LEAVE_BEATS     = 2,      -- a "just left the base" edge stays usable for this many beats
+    TRIP_BEATS      = 3,      -- beats outside the base before it counts as a trip (~75 s; the gate, the dock and a perimeter wall are not trips)
+    UNLOAD_AFTER_TRIP = true, -- only a truck coming home from a trip unloads (a gate stop on the way out never does)
+    UNLOAD_REACH    = 16,     -- at the unload beat he must be in the base or within this many tiles of the truck
+    HOLD_MAX        = 2000,   -- runaway guard for the held-items list (never reached in play)
 }
 
 local state = {
@@ -59,6 +76,8 @@ local state = {
     packFull       = false, -- vacuum reported "did not fit"; wait for a sort to free room
     wasInBase      = false, -- in the base at the previous beat (edge detection for the pre-trip restock)
     leftBeat       = nil,   -- beat on which we noticed we had just left the base
+    outBeats       = 0,     -- consecutive beats outside the base (TRIP_BEATS of them start a trip)
+    away           = false, -- a trip happened since the last auto sort / unload: what he carries may be loot
     fails          = { loot = 0, sort = 0, unload = 0 },
     off            = { loot = false, sort = false, unload = false },
 }
@@ -71,30 +90,69 @@ local function say(player, msg, good)
     end)
 end
 
+-- ---- HELD items: taken from base storage, so not loot ----
+-- Keyed by item id, for this session only. Set by EmpireAutoChores.hold (quartermasters, the transfer
+-- hook); cleared when a trip starts. A held bag holds what is inside it (a packed bag stays packed).
+local held, heldN = {}, 0
+local function itemId(it)
+    local id = nil
+    pcall(function() id = it:getID() end)
+    return id
+end
+function EmpireAutoChores.hold(it)
+    local id = itemId(it)
+    if id == nil or held[id] then return end
+    if heldN >= CFG.HOLD_MAX then held, heldN = {}, 0 end
+    held[id] = true
+    heldN = heldN + 1
+end
+function EmpireAutoChores.isHeld(it)
+    if heldN == 0 or it == nil then return false end
+    local cur = it
+    for _ = 0, 4 do
+        local id = itemId(cur)
+        if id ~= nil and held[id] then return true end
+        local bag = nil
+        pcall(function() local c = cur:getContainer(); bag = c and c:getContainingItem() end)
+        if not bag or bag == cur then return false end
+        cur = bag
+    end
+    return false
+end
+EmpireAutoChores.heldCount = function() return heldN end
+local function releaseHolds() held, heldN = {}, 0 end
+-- the auto sort's itemFilter: everything may move except held items
+local function notHeld(it) return not EmpireAutoChores.isHeld(it) end
+
 -- Number of items on the player: the body inventory plus everything inside worn bags / rigs
 -- (they are items of the body inventory), nested up to 3 deep. A cheap "did loot arrive"
 -- signal; only evaluated at base after the cooldown, never per frame.
-local function countIn(cont, depth)
+-- skipHeld: held items (and what is inside a held bag) are not counted.
+local function countIn(cont, depth, skipHeld)
     local items, sz = nil, 0
     pcall(function() items = cont:getItems(); sz = items:size() end)
     if not items then return 0 end
     local n = sz
-    if depth < 3 then
+    if depth < 3 or skipHeld then
         for i = 0, sz - 1 do
             pcall(function()
                 local it = items:get(i)
-                if instanceof(it, "InventoryContainer") then
+                if skipHeld then
+                    local id = itemId(it)
+                    if id ~= nil and held[id] then n = n - 1; return end
+                end
+                if depth < 3 and instanceof(it, "InventoryContainer") then
                     local sub = it:getInventory()
-                    if sub and sub ~= cont then n = n + countIn(sub, depth + 1) end
+                    if sub and sub ~= cont then n = n + countIn(sub, depth + 1, skipHeld) end
                 end
             end)
         end
     end
     return n
 end
-local function carriedCount(player)
+local function carriedCount(player, skipHeld)
     local n = 0
-    pcall(function() n = countIn(player:getInventory(), 0) end)
+    pcall(function() n = countIn(player:getInventory(), 0, skipHeld == true and heldN > 0) end)
     return n
 end
 
@@ -246,7 +304,7 @@ end
 local function doSort(player)
     if not (EmpireSortAll and EmpireSortAll.run) then return end
     local t0 = nowMs()
-    EmpireSortAll.run(player, { carriedOnly = CFG.SORT_CARRIED_ONLY })
+    EmpireSortAll.run(player, { carriedOnly = CFG.SORT_CARRIED_ONLY, itemFilter = notHeld })
     local ms = nowMs() - t0
     -- a sort is one synchronous frame: if it hitched, wait longer before the next one
     if ms > CFG.SORT_SLOW_MS then state.slowExtra = math.min(state.slowExtra + 3, 12) end
@@ -254,19 +312,40 @@ local function doSort(player)
     state.lastSortBeat  = state.beat
     state.vacuumedSince = 0
     state.packFull      = false
-    state.carriedAtSort = carriedCount(player)
+    state.away          = false
+    state.carriedAtSort = carriedCount(player, true)
+end
+
+local function vehicleDocked(veh)
+    local docked = false
+    pcall(function() docked = EmpireBases and EmpireBases.vehicleNearBase and EmpireBases.vehicleNearBase(veh, CFG.DOCK_RADIUS) end)
+    return docked == true
+end
+
+local function nearVehicle(player, veh, r)
+    local near = false
+    pcall(function()
+        local dx, dy = player:getX() - veh:getX(), player:getY() - veh:getY()
+        near = (dx * dx + dy * dy) <= r * r
+    end)
+    return near
 end
 
 local function doUnload(player)
     local veh = state.pendingUnload
     state.pendingUnload = nil
     if not veh or not (EmpireSortAll and EmpireSortAll.transferVehicle) then return end
-    local n = EmpireSortAll.transferVehicle(player, veh, CFG.UNLOAD_MIN_ITEMS)
+    -- the park must still be true: that truck still at the dock, and him still home (in the base or by
+    -- the truck). A park that went stale never unloads the truck, or his pack, from somewhere else.
+    if not vehicleDocked(veh) then return end
+    if not (inBase(player) or nearVehicle(player, veh, CFG.UNLOAD_REACH)) then return end
+    local n = EmpireSortAll.transferVehicle(player, veh, CFG.UNLOAD_MIN_ITEMS, { itemFilter = notHeld })
     if n and n > 0 then
         say(player, "Unloaded the vehicle into base storage (" .. n .. " items)", true)
         state.vacuumedSince = 0   -- the truck unload also filed what was carried
         state.packFull = false
-        state.carriedAtSort = carriedCount(player)
+        state.away = false
+        state.carriedAtSort = carriedCount(player, true)
     end
 end
 
@@ -279,14 +358,20 @@ end)
 
 -- sort when we are home: files whatever the last trip brought in
 EmpireAutoChores.register("sort", 30, function(player, ctx)
-    if not CFG.SORT_ENABLED then return false end
-    if (state.beat - state.lastSortBeat) < (CFG.SORT_COOLDOWN + state.slowExtra) or not ctx.inBase then return false end
-    local grew = carriedCount(player) - (state.carriedAtSort or carriedCount(player))
+    if not CFG.SORT_ENABLED or not ctx.inBase then return false end
+    -- home since the last sort and nothing auto-looted: whatever arrived on him came off the base's
+    -- own shelves (a bag packed for a trip, a quartermaster fetch, a can opener), not loot
+    if not state.away and state.vacuumedSince <= 0 then return false end
+    if (state.beat - state.lastSortBeat) < (CFG.SORT_COOLDOWN + state.slowExtra) then return false end
+    local now = carriedCount(player, true)
+    local grew = now - (state.carriedAtSort or now)
     if state.vacuumedSince > 0 or grew >= CFG.SORT_MIN_NEW then
         doSort(player)
         say(player, "Auto-sorted your loot into base storage", true)
         return true
     end
+    -- home from a trip with nothing worth filing: from here on, what he picks up at home is his own stock
+    state.away = false
     return false
 end)
 
@@ -307,8 +392,20 @@ local function onBeat()
     -- base edge tracking happens before the busy check so a busy beat does not lose it
     local nowIn = inBase(player)
     if state.wasInBase and not nowIn then state.leftBeat = state.beat end
-    if nowIn then state.leftBeat = nil end
+    if nowIn then state.leftBeat = nil; state.outBeats = 0 else state.outBeats = state.outBeats + 1 end
+    if state.outBeats == CFG.TRIP_BEATS then
+        -- a trip starts: what he left with is his kit, not loot, and the holds on what he took end here
+        state.away = true
+        releaseHolds()
+        state.carriedAtSort = carriedCount(player)
+    end
     state.wasInBase = nowIn
+    -- back in a vehicle: the park is over (OnEnterVehicle normally clears it already)
+    if state.pendingUnload then
+        local inVeh = false
+        pcall(function() inVeh = player:getVehicle() ~= nil end)
+        if inVeh then state.pendingUnload = nil end
+    end
     if busy(player) then return end
     local ctx = {
         beat = state.beat, inBase = nowIn,
@@ -340,16 +437,18 @@ local function isLocal(ch)
 end
 
 Events.OnEnterVehicle.Add(function(ch)
-    if isLocal(ch) then pcall(function() state.lastVeh = ch:getVehicle() end) end
+    if isLocal(ch) then
+        state.pendingUnload = nil   -- driving again: the park is over (the next docked exit re-arms it)
+        pcall(function() state.lastVeh = ch:getVehicle() end)
+    end
 end)
 
 local function onExitVehicle(ch)
     local veh = state.lastVeh
     state.lastVeh = nil
+    state.pendingUnload = nil       -- only this exit can arm an unload, and only at the dock
     if not veh or not state.on then return end
-    local docked = false
-    pcall(function() docked = EmpireBases and EmpireBases.vehicleNearBase and EmpireBases.vehicleNearBase(veh, CFG.DOCK_RADIUS) end)
-    if not docked then return end
+    if not vehicleDocked(veh) then return end
     if CFG.PARK_ENABLED then
         local running = false
         pcall(function() running = veh:isEngineRunning() end)
@@ -357,11 +456,41 @@ local function onExitVehicle(ch)
         pcall(function() veh:setHeadlightsOn(false) end)   -- a parked car's lights drain the battery
         if running then say(ch, "Parked: engine off", false) end
     end
-    if CFG.UNLOAD_ENABLED and not state.off.unload then state.pendingUnload = veh end
+    -- unload a truck coming home from a trip; a stop at the gate on the way out keeps the trip's supplies
+    if CFG.UNLOAD_ENABLED and not state.off.unload and (state.away or not CFG.UNLOAD_AFTER_TRIP) then
+        state.pendingUnload = veh
+    end
 end
 
 Events.OnExitVehicle.Add(function(ch)
     if isLocal(ch) then pcall(onExitVehicle, ch) end
+end)
+
+-- ---- taking things off the base's own shelves: hold them ----
+-- Vanilla moves every item through ISInventoryTransferAction:transferItem (drag, grab, "transfer all",
+-- a vanilla craft gathering its ingredients). From a container that is not his onto him, while he is in
+-- the base: that came out of his own storage, so it is held. A corpse is loot and is never held.
+local function noteTransfer(action)
+    local p, src, it = action.character, action.srcContainer, action.item
+    if not (it and src and isLocal(p)) then return end
+    local dst = nil
+    pcall(function() dst = it:getContainer() end)
+    if not (dst and dst:isInCharacterInventory(p)) then return end
+    if src:isInCharacterInventory(p) then return end
+    if instanceof(src:getParent(), "IsoDeadBody") then return end
+    if inBase(p) then EmpireAutoChores.hold(it) end
+end
+local transferWrapped = false
+Events.OnGameStart.Add(function()
+    local T = ISInventoryTransferAction
+    if transferWrapped or not (T and T.transferItem) then return end
+    local orig = T.transferItem
+    T.transferItem = function(self, ...)
+        local r = orig(self, ...)
+        pcall(noteTransfer, self)
+        return r
+    end
+    transferWrapped = true
 end)
 
 -- ---- master switch (Numpad 5), saved per character ----
@@ -400,6 +529,8 @@ Events.OnGameStart.Add(function()
     state.beat, state.lastSortBeat, state.lastLootBeat = 0, -99, -99
     state.kills, state.lastVeh, state.pendingUnload, state.slowExtra = 0, nil, nil, 0
     state.wasInBase, state.leftBeat = inBase(p), nil
+    state.outBeats, state.away = 0, not state.wasInBase   -- loaded outside the base: on a trip
+    releaseHolds()
     local names = {}
     for _, c in ipairs(chores) do names[#names + 1] = c.name end
     print("[EmpireQoL] AutoChores loaded: one 10-min beat, " .. (state.on and "ON" or "OFF")

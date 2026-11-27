@@ -51,7 +51,7 @@ local function runTests()
         "ISHandcraftAction.performRecipe", "ISHandcraftAction.start",
         "ISInventoryPage.dirtyUI", "ISInventoryPane.getActualItems",
         "ISInventoryPaneContextMenu.getContainers", "ISInventoryPaneContextMenu.onFix",
-        "ISInventoryTransferAction.perform",
+        "ISInventoryTransferAction.perform", "ISInventoryTransferAction.transferItem",
         "ISLoadBulletsInMagazine.new", "ISModalDialog.new", "ISTextBox.new",
         "ISTimedActionQueue.add", "ISTimedActionQueue.getTimedActionQueue", "ISTimedActionQueue.isPlayerDoingAction",
         "ISVehicleMechanics.doPartContextMenu",
@@ -130,7 +130,8 @@ local function runTests()
         end
         check("chore.helpers", EmpireAutoChores ~= nil and type(EmpireAutoChores.m) == "function"
             and type(EmpireAutoChores.fetch) == "function" and type(EmpireAutoChores.carriedContainers) == "function"
-            and type(EmpireAutoChores.baseContainers) == "function" and type(EmpireAutoChores.noteLoot) == "function")
+            and type(EmpireAutoChores.baseContainers) == "function" and type(EmpireAutoChores.noteLoot) == "function"
+            and type(EmpireAutoChores.hold) == "function" and type(EmpireAutoChores.isHeld) == "function")
         check("chore.base.peek", type(EmpireBaseCache) == "table" and type(EmpireBaseCache.peek) == "function"
             and type(EmpireBaseCache.containersFor) == "function", "restock's just-left-base catch-up needs EmpireBaseCache.peek")
         check("chore.topoff.export", type(EmpireQoL_TopOffMags) == "function", "restock cannot top the mags off")

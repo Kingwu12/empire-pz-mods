@@ -108,6 +108,7 @@ local function quickReplace(playerObj, vehicle)
                     else
                         local ok = pcall(function() fromCont:Remove(spare); inv:addItem(spare) end)
                         if ok then
+                            if EmpireAutoChores and EmpireAutoChores.hold then pcall(EmpireAutoChores.hold, spare) end   -- taken from base: the auto sort leaves it on you
                             pcall(function()
                                 if invItem then ISVehiclePartMenu.onUninstallPart(playerObj, part) end
                                 ISVehiclePartMenu.onInstallPart(playerObj, part, spare)
