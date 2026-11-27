@@ -175,6 +175,7 @@ mods
     mod = EmpireLoot,
     mod = EmpireProduction,
     mod = EmpireZones,
+    mod = EmpireStockpiles,
     mod = AmmoLootDropGuns93B42,
     mod = AmmoLootDropGuns93B42Magazine,
     mod = AmmoLootDropGuns93B42Weapon,

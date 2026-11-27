@@ -27,3 +27,4 @@ node runner.js ../../EmpireZones/42/media/lua/shared/EmpireZones_Core.lua zone_t
   capacity with the `freeOf` memo, category-count cache, no-opts behaviour against the unpatched sorter, and
   `transferVehicle` returning the items that really left the truck (0 when no storage is in range).
 - `zone_test.lua`: EmpireBases.getEmpireZoneBase cache and EmpireZones.version invalidation.
+- `stockpiles_test.lua`: EmpireStockpiles against the real vanilla ProceduralDistributions and Distributions (rolls, home weights, port room aliases, idempotence). Needs the vanilla files: `VANILLA_ITEMS=<42.22.2>/media/lua/server/Items bash tests/chores/run_all.sh`.

@@ -27,4 +27,9 @@ run production $Q/13_AutoChores.lua tests/chores/production_test.lua $Q/16_AutoP
 run restock    $Q/13_AutoChores.lua tests/chores/restock_test.lua $Q/17_PreTripRestock.lua
 run sorter     $S/EmpireSortAll_Client.lua tests/chores/sorter_test.lua $S/EmpireSortAll_Config.lua ${ORIG_SORTER:-}
 run zone       EmpireZones/42/media/lua/shared/EmpireZones_Core.lua tests/chores/zone_test.lua "$(cat $Q/29_BaseRegistry.lua)"
+# Needs the vanilla loot tables (not shipped here): VANILLA_ITEMS=<42.22.2>/media/lua/server/Items
+if [ -n "${VANILLA_ITEMS:-}" ]; then
+  run stockpiles EmpireStockpiles/42/media/lua/server/Items/EmpireStockpiles.lua tests/chores/stockpiles_test.lua \
+      "$VANILLA_ITEMS/ProceduralDistributions.lua" "$VANILLA_ITEMS/Distributions.lua"
+fi
 exit $failed
