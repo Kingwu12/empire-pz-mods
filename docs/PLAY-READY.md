@@ -1,6 +1,6 @@
 # Play-ready: what was decided, and the one command (26 Nov 2026, Build 42.22.2)
 
-**Bottom line (27 Nov).** All 15 Workshop items are subscribed and downloaded (the old H.E.C.U. is unsubscribed), and the check says READY: 173 mods, every requirement present and in load order. `EmpirePlay` is already the default mod list on the PC and its sandbox preset has the NPC settings. The one thing left is to push the repo and pull it on the PC: until then the PC has the Empire mods from `8aca8cd`, without the newer automation (needs, farm, production, restock).
+**Bottom line (27 Nov).** All 15 Workshop items are subscribed and downloaded (the old H.E.C.U. is unsubscribed), and the check says READY: 176 mods, every requirement present and in load order. `EmpirePlay` is already the default mod list on the PC and its sandbox preset has the NPC settings. The one thing left is to push the repo and pull it on the PC: until then the PC has the Empire mods from `8aca8cd`, without the newer automation (needs, farm, production, restock).
 
 ```
 .\tools\ready-to-play.ps1          (PowerShell on the PC, game closed; -Check only reports)
@@ -14,7 +14,7 @@ If a Workshop item ever needs subscribing again, `.\tools\open-workshop-pages.ps
 |---|---|---|
 | Java mods or Lua? | **Lua only.** | The Indie Stone (21 Oct) support Lua only; Java mods break on updates, need a loader, and the Java NPC mod (Knox Survivors) was the one that froze 1-2 s. Java is faster per operation, but our lag is how often code runs, not the language. |
 | NPCs | **Bandits NPC + NPC Crew** (Lua, no loader). Alternative if it disappoints: Stay With Me. | Best colony features among Lua mods (beacon, zones, sorters, farmer, builder, hunter, loot runs). Cost grows with zombie count, so population is lowered below. |
-| Which pack | **`EmpirePlay`: 173 mods.** Fallback `EmpireB42-22-lean` (35 mods, the performance control). | Your 184-mod pack minus 21 (13 cut, 7 replaced, 1 Knox-only window), plus 7 maintained additions, the two libraries Evolving Traits World needs (Moodle Framework, Unified Carry Weight Framework) and the Louisville Shipping Port with the 4 tile packs its B42 version needs. |
+| Which pack | **`EmpirePlay`: 176 mods.** Fallback `EmpireB42-22-lean` (35 mods, the performance control). | Your 184-mod pack minus 21 (13 cut, 7 replaced, 1 Knox-only window), plus 7 maintained additions, the two libraries Evolving Traits World needs (Moodle Framework, Unified Carry Weight Framework) and the Louisville Shipping Port with the 4 tile packs its B42 version needs. |
 | Zombie population | **Low** (`Sandbox Presets\EmpirePlay.cfg`, a copy of your `empire.cfg` with `Zombies=5`). `empire.cfg` is untouched. | NPC mods cost frame time per zombie. Change it back in the sandbox screen if the run feels empty. |
 | JVM heap | **-Xms2048m -Xmx6144m**, applied. | Steam's update had reset it to stock 3 GB, probably the biggest cause of the old lag. Re-run the script after every game update. |
 | Sorting and chores | **Automatic** (`13_AutoChores`): corpse looting, base sort, park and unload, one 10-minute beat, no per-frame work. Numpad 5 turns it off. | "I love empire building but dont like the sorting and small things." |
@@ -52,7 +52,7 @@ Tile packs hold no Lua, so they add loading time and some texture memory, not pe
 
 ## Realism and crafting (27 Nov, your call: loot respawn is not realistic, ammo must be craftable)
 
-What the preset had before: loot respawned every 200 hours; food, medical, ammo, guns, mechanics and materials were all "abundant"; tools and recipe parts were "rare"; and three mods made zombies drop ammo, magazines and guns. That is the opposite of a crafting game.
+What the preset had before: loot respawned every 200 hours; food, medical, ammo, guns, mechanics and materials were all "abundant"; tools and recipe parts were "rare"; and three mods made zombies drop ammo, magazines and guns from about half of all bodies. That is the opposite of a crafting game.
 
 What it is now (`docs/presets/EmpirePlay-mod-options.cfg`, written into `Sandbox Presets\EmpirePlay.cfg` by the script):
 
@@ -61,7 +61,7 @@ What it is now (`docs/presets/EmpirePlay-mod-options.cfg`, written into `Sandbox
 | `HoursForLootRespawn` | 200 | **0 (off)** | A looted shelf stays empty. The world is finite, so farming, trapping and crafting matter. |
 | `AmmoLootNew`, `RangedWeaponLootNew` | abundant (3.0) | **rare (0.6)** | Ready-made ammo and guns are finds, not a supply. |
 | `ToolLootNew`, `RecipeResourceLoot` | rare (0.6) | **normal (1.0)** | Crafting is the main loop, so the things recipes need are not scarce. |
-| Zombie ammo drops | 3 mods | **removed** | Endless drops cancel the rarity above. |
+| Zombie ammo, magazine and gun drops | 3 mods, default rates (ammo from about 55 percent of ALL bodies) | **kept, armed outfits only**, rounds 4, magazine 15, sidearm 10 | Zombies and people did carry ammo, but only the ones who carried guns: soldiers, police, guards, hunters, farmers, bikers (about 1 zombie in 100 in a town, each with calibres that fit their gun). Police stations, army bases, prisons and farms pay out; the suburbs do not. Rates are a first guess: tune after the first police station. |
 
 **Ammo from found things: Ammo Maker** (Workshop 2788256295, mod id `ammomaker`, 330k subscribers, updated 11 Nov with a 42.22.2 hotfix). Vanilla 42.22.2 cannot make or reload any ammo (it only boxes, unboxes, and breaks a round down to gunpowder). Ammo Maker adds gunpowder (nitre beds), lead and brass casting, a reloading press and casings, for over 80 calibres, and Guns of '93 ships a table built for it. Primers are off by default (sandbox `ammomakerOptions.Primers`); turn them on later for the harder version. It is script and art only (no Java), it overrides no vanilla functions, and its loot hooks are two ten-minute handlers plus the container-fill hook. Its licence forbids patching or forking it, so anything we add goes in a separate mod. Not tested in the game yet.
 

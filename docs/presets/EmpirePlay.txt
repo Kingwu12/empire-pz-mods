@@ -175,6 +175,9 @@ mods
     mod = EmpireLoot,
     mod = EmpireProduction,
     mod = EmpireZones,
+    mod = AmmoLootDropGuns93B42,
+    mod = AmmoLootDropGuns93B42Magazine,
+    mod = AmmoLootDropGuns93B42Weapon,
 }
 
 maps

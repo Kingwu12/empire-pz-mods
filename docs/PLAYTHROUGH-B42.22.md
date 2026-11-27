@@ -87,7 +87,7 @@ Section 5 is the 16-mod third-party core. King's actual preset is `EmpireStable`
 
 | Preset (copy into `Zomboid/mods/`) | Mods | Use |
 |---|---|---|
-| [`presets/EmpirePlay.txt`](presets/EmpirePlay.txt) | 173 | **The chosen one.** The full pack plus the Louisville Shipping Port with its tile packs and the 7 additions (Bandits NPC, NPC Crew, VB_CommonSense, Evolving Traits World, H.E.C.U. B42, two KI5 patches). Needs those subscribed first; see [`PLAY-READY.md`](PLAY-READY.md). |
+| [`presets/EmpirePlay.txt`](presets/EmpirePlay.txt) | 176 | **The chosen one.** The full pack plus the Louisville Shipping Port with its tile packs and the 7 additions (Bandits NPC, NPC Crew, VB_CommonSense, Evolving Traits World, H.E.C.U. B42, two KI5 patches). Needs those subscribed first; see [`PLAY-READY.md`](PLAY-READY.md). |
 | [`presets/EmpireB42-22.txt`](presets/EmpireB42-22.txt) | 163 | KEEP + TEST with what is installed today: no NPCs, old Common Sense stays out. Works without any new subscription. |
 | [`presets/EmpireB42-22-lean.txt`](presets/EmpireB42-22-lean.txt) | 35 | KEEP only, no heavy content packs. The performance baseline and the bake-off control. |
 
