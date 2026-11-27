@@ -1,6 +1,11 @@
 module Base
 {
-    /* EmpireQoL :: craftable parts for Papa_Chad's U.S. M998 Humvee.
+    /* INERT (.off): only rename to .txt while Papa_Chad's M998 mod is enabled.
+       Without that mod these recipes name items that do not exist, and B42.22
+       aborts world load (ScriptManager.PostWorldDictionaryInit: item not found).
+       EmpirePlay uses KI5's 92amgeneralM998 instead, so this file stays off.
+
+       EmpireQoL :: craftable parts for Papa_Chad's U.S. M998 Humvee.
        Papa's mod is loot-only (ArmyHangarMechanics / CrateMechanics /
        MechanicSpecial tables); KI5's M998 recipes make parts for a different
        truck. These recipes give the driven Humvee a native crafting path,

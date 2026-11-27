@@ -35,7 +35,7 @@ Each top-level `Empire*/` folder is one standalone mod. "B42" means the mod has 
 2. Enable them in the game's mod list (and any required third-party mods named above).
 3. Start or load a save. Lua is re-read on load; there is nothing to compile.
 
-Load order: EmpireAmmo after `ammo_smelting` and `GunFighter`. EmpireQoL's M998 script overrides (`42/media/scripts/vehicles/`) assume it loads after the M998 Humvee mod when that is used.
+Load order: EmpireAmmo after `ammo_smelting` and `GunFighter`. EmpireQoL's M998 script overrides (`42/media/scripts/vehicles/`) assume it loads after the M998 Humvee mod when that is used. `empire_M998_papa_recipes.txt.off` (craft recipes for Papa_Chad's M998 parts) ships inert: rename it to `.txt` only while Papa's mod is enabled, because B42.22 aborts world load when a recipe names an item that does not exist.
 
 ## Auto-chores (26 Nov 2026): the sorting and small things, hands-free
 

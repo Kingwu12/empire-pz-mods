@@ -176,24 +176,31 @@ local function runTests()
         end)
     end
 
-    -- T3: the five Papa Humvee craft recipes are registered
-    local recipes = { "Empire_M998_MakeBullBar", "Empire_M998_MakeM2Armor",
-        "Empire_M998_MakeTurretArmor", "Empire_M998_MakeMuffler",
-        "Empire_M998_MakeSpareTireCarrier" }
-    for _, r in ipairs(recipes) do
-        local found = false
-        pcall(function() found = getScriptManager():getCraftRecipe(r) ~= nil end)
-        check("recipe." .. r, found)
-    end
+    -- T3/T4: the Papa Humvee craft recipes and part items. Only meaningful when Papa_Chad's
+    -- M998 mod is enabled AND the optional recipe script (empire_M998_papa_recipes.txt, shipped
+    -- as .off) has been switched on. EmpirePlay uses KI5's M998 instead, so skip cleanly.
+    local papaLoaded = false
+    pcall(function() papaLoaded = getScriptManager():getItem("Base.M998_Bull_Bar2") ~= nil end)
+    if not papaLoaded then
+        print("[EmpireTest] SKIP recipe.Empire_M998_* / item.Base.M998_* -- Papa_Chad M998 mod not loaded (expected in EmpirePlay)")
+    else
+        local recipes = { "Empire_M998_MakeBullBar", "Empire_M998_MakeM2Armor",
+            "Empire_M998_MakeTurretArmor", "Empire_M998_MakeMuffler",
+            "Empire_M998_MakeSpareTireCarrier" }
+        for _, r in ipairs(recipes) do
+            local found = false
+            pcall(function() found = getScriptManager():getCraftRecipe(r) ~= nil end)
+            check("recipe." .. r, found)
+        end
 
-    -- T4: Papa part items resolvable (the recipe outputs / compat targets)
-    local items = { "Base.M998_Bull_Bar2", "Base.M998_M2_Armor_Green2",
-        "Base.M998_Turret_Armor_Green2", "Base.M998_Muffler2",
-        "Base.M998_Spare_Tire_Carrier2" }
-    for _, ft in ipairs(items) do
-        local it = nil
-        pcall(function() it = instanceItem(ft) end)
-        check("item." .. ft, it ~= nil, it and it:getDisplayName() or "not spawnable")
+        local items = { "Base.M998_Bull_Bar2", "Base.M998_M2_Armor_Green2",
+            "Base.M998_Turret_Armor_Green2", "Base.M998_Muffler2",
+            "Base.M998_Spare_Tire_Carrier2" }
+        for _, ft in ipairs(items) do
+            local it = nil
+            pcall(function() it = instanceItem(ft) end)
+            check("item." .. ft, it ~= nil, it and it:getDisplayName() or "not spawnable")
+        end
     end
 
     -- T5: fixing pipe alive end-to-end on a tire (VRO supplies tire fixings;
