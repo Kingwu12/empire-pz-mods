@@ -1,12 +1,12 @@
 # Play-ready: what was decided, and the one command (26 Nov 2026, Build 42.22.2)
 
-**Bottom line.** Everything that can be set up is set up. What is left is subscribing to 14 Workshop items (14 clicks on your Steam account), then one command that checks the whole pack and says READY.
+**Bottom line (27 Nov).** All 15 Workshop items are subscribed and downloaded (the old H.E.C.U. is unsubscribed), and the check says READY: 175 mods, every requirement present and in load order. What is left is to push the repo, run the script once on the PC to make `EmpirePlay` the default, and play.
 
 ```
 .\tools\ready-to-play.ps1          (PowerShell on the PC, game closed; -Check only reports)
 ```
 
-Quickest way to subscribe: run `.\tools\open-workshop-pages.ps1` in PowerShell on the PC. It opens the 15 pages below one at a time in your signed-in Steam client, so each is one click (the last one is the Unsubscribe).
+If a Workshop item ever needs subscribing again, `.\tools\open-workshop-pages.ps1` opens each page in your signed-in Steam client, one click each.
 
 ## The decisions
 
@@ -14,7 +14,7 @@ Quickest way to subscribe: run `.\tools\open-workshop-pages.ps1` in PowerShell o
 |---|---|---|
 | Java mods or Lua? | **Lua only.** | The Indie Stone (21 Oct) support Lua only; Java mods break on updates, need a loader, and the Java NPC mod (Knox Survivors) was the one that froze 1-2 s. Java is faster per operation, but our lag is how often code runs, not the language. |
 | NPCs | **Bandits NPC + NPC Crew** (Lua, no loader). Alternative if it disappoints: Stay With Me. | Best colony features among Lua mods (beacon, zones, sorters, farmer, builder, hunter, loot runs). Cost grows with zombie count, so population is lowered below. |
-| Which pack | **`EmpirePlay`: 176 mods.** Fallback `EmpireB42-22-lean` (35 mods, the performance control). | Your 184-mod pack minus 21 (13 cut, 7 replaced, 1 Knox-only window), plus 7 maintained additions and the Louisville Shipping Port with its 6 tile packs. |
+| Which pack | **`EmpirePlay`: 175 mods.** Fallback `EmpireB42-22-lean` (35 mods, the performance control). | Your 184-mod pack minus 21 (13 cut, 7 replaced, 1 Knox-only window), plus 7 maintained additions, the two libraries Evolving Traits World needs (Moodle Framework, Unified Carry Weight Framework) and the Louisville Shipping Port with the 4 tile packs its B42 version needs. |
 | Zombie population | **Low** (`Sandbox Presets\EmpirePlay.cfg`, a copy of your `empire.cfg` with `Zombies=5`). `empire.cfg` is untouched. | NPC mods cost frame time per zombie. Change it back in the sandbox screen if the run feels empty. |
 | JVM heap | **-Xms2048m -Xmx6144m**, applied. | Steam's update had reset it to stock 3 GB, probably the biggest cause of the old lag. Re-run the script after every game update. |
 | Sorting and chores | **Automatic** (`13_AutoChores`): corpse looting, base sort, park and unload, one 10-minute beat, no per-frame work. Numpad 5 turns it off. | "I love empire building but dont like the sorting and small things." |
@@ -24,7 +24,7 @@ Quickest way to subscribe: run `.\tools\open-workshop-pages.ps1` in PowerShell o
 Subscribe (Steam page > Subscribe):
 
 1. [Common Sense B42.20+ (VB_CommonSense)](https://steamcommunity.com/sharedfiles/filedetails/?id=3750253491), replaces the old Common Sense that throws on 42.21+. `ReloadAllMagazines` is dropped because this one already reloads all.
-2. [Evolving Traits World](https://steamcommunity.com/sharedfiles/filedetails/?id=2914075159), replaces More Traits Legacy (unsupported). Turn dynamic gain and loss off.
+2. [Evolving Traits World](https://steamcommunity.com/sharedfiles/filedetails/?id=2914075159), replaces More Traits Legacy (unsupported). Turn dynamic gain and loss off. It also needs [Moodle Framework](https://steamcommunity.com/sharedfiles/filedetails/?id=3396446795) (`MoodleFramework`, now subscribed and in the preset) and Unified Carry Weight Framework (already installed, now in the preset).
 3. [Bandits NPC](https://steamcommunity.com/sharedfiles/filedetails/?id=3268487204), the NPC base.
 4. [NPC Crew](https://steamcommunity.com/sharedfiles/filedetails/?id=3800132623), the colony jobs on top of it.
 5. [H.E.C.U. B42.20](https://steamcommunity.com/sharedfiles/filedetails/?id=3737864976), same mod id as your old H.E.C.U. **Then unsubscribe the old item** [3452711271](https://steamcommunity.com/sharedfiles/filedetails/?id=3452711271): two items with one id fight each other.
@@ -36,17 +36,17 @@ Wait for Steam to finish the downloads (the port and its tile packs are listed i
 
 The mod you meant is **Louisville Shipping Port** by Simon MD: a map mod just west of Louisville Airport (cells 41:15, 41:16, 42:16) with two docked ships, a military vessel and a freighter, and rows of shipping containers full of loot. Its loot respawns. It is tagged Build 42 and was updated 5 Nov. No map mod already in the pack overlaps those cells (checked against the installed ones on the PC). The game orders map mods itself, so the preset has no map entry.
 
-Subscribe to the port and the six tile packs it needs (PertsPartyTiles, the seventh, is already installed):
+Subscribed on 27 Nov (the port's Subscribe-to-All also pulled in three old B41-era tile packs):
 
 1. [Louisville Shipping Port](https://steamcommunity.com/sharedfiles/filedetails/?id=3149613879) (mod id `SimonMDLVHarbor`, 15 MB)
 2. [Simon MD's Tiles](https://steamcommunity.com/sharedfiles/filedetails/?id=2852704777) (`simonMDsTiles`, 809 MB)
 3. [Melos Tiles for Miles Tilepack](https://steamcommunity.com/sharedfiles/filedetails/?id=2879745353) (`melos_tiles_for_miles_pack`, 1.6 GB)
 4. [Community Tile Pack](https://steamcommunity.com/sharedfiles/filedetails/?id=3628736763) (`UnofficialMappersCommunityTilePack`, 220 MB)
-5. [Daddy Dirkie dirks tiles](https://steamcommunity.com/sharedfiles/filedetails/?id=2337452747) (`Diederiks Tile Palooza`, 64 MB)
-6. [Dylan's Tile Pack](https://steamcommunity.com/sharedfiles/filedetails/?id=2599752664) (`DylansTiles`, 71 MB)
-7. [throttlekitty's tiles](https://steamcommunity.com/sharedfiles/filedetails/?id=2384329562) (`tkTiles_01`, 10 MB)
+5. PertsPartyTiles (already in the pack)
 
-About 2.8 GB to download; the PC's Steam drive has 1.5 TB free. Tile packs hold no Lua, so they add loading time and some texture memory, not per-frame work. The port itself is unmeasured: if the frame rate drops near the docks, that is the place to look. Also unverified until the downloads land: the mod ids above come from the Workshop descriptions. If any differs from its real `mod.info`, the script prints the ids the item really provides.
+The port's own B42 `mod.info` (its `42` folder, which the game reads on 42.22) requires exactly those four tile packs. Its old B41 file also lists Daddy Dirkie's, Dylan's and throttlekitty's tiles; those are not needed on B42, so they are **not** in `EmpirePlay`. They are still subscribed (about 140 MB, harmless): unsubscribe them if you want a tidier library. The script now reads only the `mod.info` the game would use, so it does not ask for them.
+
+Tile packs hold no Lua, so they add loading time and some texture memory, not per-frame work. The port itself is unmeasured: if the frame rate drops near the docks, that is the place to look.
 
 `Containers!` (the placeable shipping containers, `isoContainers`) is a different mod. It stays in the pack as TEST.
 

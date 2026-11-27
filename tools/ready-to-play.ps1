@@ -16,7 +16,8 @@
 param(
     [switch]$Check,
     [string]$Preset = 'EmpirePlay',
-    [string]$ZomboidDir = (Join-Path $env:USERPROFILE 'Zomboid')
+    [string]$ZomboidDir = (Join-Path $env:USERPROFILE 'Zomboid'),
+    [string]$GameVersion = '42.22.2'
 )
 $ErrorActionPreference = 'Stop'
 $repo      = Split-Path $PSScriptRoot -Parent
@@ -58,7 +59,8 @@ else { Good "heap is -Xms2048m -Xmx6144m" }
 
 # ---- installed mods index ------------------------------------------------------------------
 Say "== Installed mods"
-$index = @{}        # mod id -> list of @{ Item=...; Req=@(...) }
+$index = @{}        # mod id -> list of @{ Item=...; Req=@(...) }, built from the mod.info the game really uses
+$recs  = New-Object System.Collections.ArrayList   # every mod.info found, before choosing one per mod
 function Read-Mods($root, $tag) {
     if (-not (Test-Path -LiteralPath $root)) { return }
     $root = (Resolve-Path -LiteralPath $root).ProviderPath
@@ -76,13 +78,37 @@ function Read-Mods($root, $tag) {
         if (-not $id) { continue }
         $item = $tag
         if ($tag -eq 'workshop') { $item = 'workshop:' + ($f.FullName.Substring($root.Length).TrimStart('\') -split '\\')[0] }
-        if (-not $index.ContainsKey($id)) { $index[$id] = New-Object System.Collections.ArrayList }
-        [void]$index[$id].Add(@{ Item = $item; Req = $req; Inc = $inc })
+        $parent = $f.Directory
+        $ver = 'root'; $modDir = $parent.FullName
+        if ($parent.Name -match '^(common|\d+(\.\d+)*)$') { $ver = $parent.Name; $modDir = $parent.Parent.FullName }
+        [void]$recs.Add(@{ Id = $id; Item = $item; Req = $req; Inc = $inc; ModDir = $modDir; Ver = $ver })
     }
 }
 Read-Mods $workshop 'workshop'
 Read-Mods $modsDir 'local'
 Read-Mods (Join-Path $ZomboidDir 'Workshop') 'zomboid-workshop'
+# A mod can ship several mod.info files (B41 root file, 42, 42.13, common). B42 reads the one in the highest
+# version folder that is not newer than the game; mods with no version folder only have the root file.
+$gameVer = [version]$GameVersion
+function Select-Effective($group) {
+    $best = $null; $bestV = $null
+    foreach ($r in $group) {
+        if ($r.Ver -match '^\d+(\.\d+)*$') {
+            $vs = $r.Ver; if ($vs -notmatch '\.') { $vs = $vs + '.0' }
+            $v = [version]$vs
+            if (($v -le $gameVer) -and (($null -eq $bestV) -or ($v -gt $bestV))) { $best = $r; $bestV = $v }
+        }
+    }
+    if ($best) { return $best }
+    foreach ($r in $group) { if ($r.Ver -eq 'root') { return $r } }
+    foreach ($r in $group) { if ($r.Ver -eq 'common') { return $r } }
+    return $group[0]
+}
+foreach ($g in ($recs | Group-Object { $_.ModDir })) {
+    $r = Select-Effective @($g.Group)
+    if (-not $index.ContainsKey($r.Id)) { $index[$r.Id] = New-Object System.Collections.ArrayList }
+    [void]$index[$r.Id].Add(@{ Item = $r.Item; Req = $r.Req; Inc = $r.Inc })
+}
 Good ("{0} mod ids found (Steam Workshop + local mods)" -f $index.Count)
 # Workshop items we swapped for a maintained one (26 Nov audit): old item id -> new item id
 $replacedItems = @{ '3452711271' = '3737864976' }   # H.E.C.U. (B41 listing) -> H.E.C.U. B42.20, same mod id
@@ -99,7 +125,8 @@ $wsId = @{ VB_CommonSense = '3750253491'; EvolvingTraitsWorld = '2914075159'; H_
            NPCCrew = '3800132623'; KI5PerfPatch = '3808100388'; KI5GeneralFixes = '3789366983';
            # Louisville Shipping Port (the port map with the shipping containers) and the tile packs it needs
            SimonMDLVHarbor = '3149613879'; simonMDsTiles = '2852704777'; 'Diederiks Tile Palooza' = '2337452747'; DylansTiles = '2599752664';
-           melos_tiles_for_miles_pack = '2879745353'; tkTiles_01 = '2384329562'; UnofficialMappersCommunityTilePack = '3628736763' }
+           melos_tiles_for_miles_pack = '2879745353'; tkTiles_01 = '2384329562'; UnofficialMappersCommunityTilePack = '3628736763';
+           MoodleFramework = '3396446795' }   # Moodle Framework: required by Evolving Traits World
 $auditCsv = Join-Path $presetSrc 'pack-audit.csv'
 if (Test-Path $auditCsv) { foreach ($r in (Import-Csv $auditCsv)) { if (-not $wsId.ContainsKey($r.mod_id)) { $wsId[$r.mod_id] = $r.workshop_id } } }
 
