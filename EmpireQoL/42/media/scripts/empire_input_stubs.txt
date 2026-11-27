@@ -1,0 +1,36 @@
+/*
+ * Empire OS -- recipe-input stubs.
+ *
+ * "Authentic Z - Backpacks+" ships upgrade recipes whose INPUT is a bag from another mod
+ * (Brita's Armor Pack / full Authentic Z), and neither is in EmpirePlay. B42.22 resolves every
+ * recipe input at world load (ScriptManager.PostWorldDictionaryInit) and a name that resolves
+ * to nothing is a script load error that can abort the whole world. Declaring the two missing
+ * names as inert Normal items lets those recipes load; nothing spawns them, so they never show
+ * up in the world. (Found with the recipe-reference scan of the enabled mods, 27 Nov 2026.)
+ *
+ * Delete this file if Brita's Armor Pack or full Authentic Z is ever enabled: a stub declared
+ * after the real bag would override it.
+ */
+module AuthenticZBackpacksPlus
+{
+	imports { Base }
+
+	item Bag_ALICEpack_DesertCamo
+	{
+		Type			=	Normal,
+		DisplayCategory	=	Junk,
+		Weight			=	1.0,
+		DisplayName		=	Missing Bag (stub),
+	}
+}
+
+module Base
+{
+	item Bag_ARVN_Rucksack
+	{
+		Type			=	Normal,
+		DisplayCategory	=	Junk,
+		Weight			=	1.0,
+		DisplayName		=	Missing Bag (stub),
+	}
+}
