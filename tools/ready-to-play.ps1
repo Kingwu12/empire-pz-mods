@@ -11,7 +11,9 @@
 #      cost more the more zombies exist. Your empire.cfg is never touched.
 #   4. Checks the chosen preset (default EmpirePlay) against what is installed: every mod present, every
 #      required mod present and loaded BEFORE the mod that needs it, no mod id installed twice.
-#   5. If everything checks out it makes EmpirePlay the default mod list for new games (backup kept).
+#   5. If everything checks out it makes EmpirePlay the default mod list for new games (backup kept) AND
+#      rewrites the game's own saved copy of the preset (Lua\pz_modlist_settings.cfg). The mod screen reads that
+#      copy, not Zomboid\mods\*.txt: when it was stale a new world got the old guns and no Proximity Inventory.
 # Needs nothing outside Windows PowerShell 5.1. Plain ASCII on purpose.
 param(
     [switch]$Check,
@@ -240,13 +242,30 @@ if (-not $Check) {
         if ((Test-Path $def) -and (-not (Test-Path ($def + '.bak-empire')))) { Copy-Item $def ($def + '.bak-empire') }
         Copy-Item (Join-Path $presetSrc ($Preset + '.txt')) $def -Force
         Good "$Preset is now the default mod list for new games"
+        # The in-game mod screen keeps its own named presets in Lua\pz_modlist_settings.cfg (one "name:id;id;..." line each)
+        # and shows those, not Zomboid\mods\<name>.txt. Rewrite this preset's line from the repo list. The game is closed here.
+        $cfg = Join-Path $ZomboidDir 'Lua\pz_modlist_settings.cfg'
+        $ids = @([System.IO.File]::ReadAllLines((Join-Path $presetSrc ($Preset + '.txt'))) | ForEach-Object { if ($_ -match '^\s*mod\s*=\s*\\?(.+?)\s*,?\s*$') { $Matches[1] } })
+        if (-not (Test-Path $cfg)) { Say "  (no in-game preset file yet: the game creates it the first time you open the mod screen; run this again after that)" }
+        elseif ($ids.Count -lt 5) { Bad "could not read the mod ids from $Preset.txt, so the in-game preset was not updated" }
+        else {
+            $text = [System.IO.File]::ReadAllText($cfg)
+            if (-not (Test-Path ($cfg + '.bak-empire'))) { [System.IO.File]::WriteAllText(($cfg + '.bak-empire'), $text) }
+            $lines = $text -split "`n"; $hit = 0
+            for ($k = 0; $k -lt $lines.Count; $k++) { if ($lines[$k].StartsWith($Preset + ':')) { $lines[$k] = $Preset + ':' + ($ids -join ';') + ';'; $hit++ } }
+            if ($hit -eq 0) {
+                $lines = @($lines | Where-Object { $_ -ne '' }) + ($Preset + ':' + ($ids -join ';') + ';') + ''
+            }
+            [System.IO.File]::WriteAllText($cfg, ($lines -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
+            Good "in-game preset $Preset rewritten in pz_modlist_settings.cfg ($($ids.Count) mods)"
+        }
     }
 }
 
 # ---- verdict -------------------------------------------------------------------------------
 Say ""
 if ($problems.Count -eq 0 -and $state[$Preset] -eq $true) {
-    Write-Host "READY. In the game: New Game > Mods > preset $Preset (already ticked), Sandbox > preset EmpirePlay." -ForegroundColor Green
+    Write-Host "READY. In the game: New Game > Mods > preset $Preset (already ticked; if not, pick it in the preset list), Sandbox > preset EmpirePlay." -ForegroundColor Green
     Say "First run: press Numpad 9 once and look for FAIL lines in console.txt ([EmpireTest])."
 } else {
     Write-Host ("NOT READY YET: {0} thing(s) above need fixing." -f $problems.Count) -ForegroundColor Yellow

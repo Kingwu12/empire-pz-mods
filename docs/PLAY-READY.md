@@ -115,7 +115,7 @@ Everything else (random houses, shops, streets) stays at the normal dial, and zo
 
 ## First play session
 
-1. New Game > Mods: `EmpirePlay` is already ticked. Sandbox: pick preset `EmpirePlay`. The NPC and trait settings are already in that preset (written by the script from `docs/presets/EmpirePlay-mod-options.cfg`): no hostile bandits, at most 12 crew per player (the mod default is 30), no self-evolving traits. Raise the crew cap once the frame rate is known.
+1. New Game > Mods: pick preset `EmpirePlay` and check that the list shows Proximity Inventory and Guns of Marz (the script rewrites the game's own saved copy of the preset, `Zomboid\Lua\pz_modlist_settings.cfg`, which is what that screen reads; on 27 Nov that copy was stale and a world got the old guns and no Proximity Inventory). Sandbox: pick preset `EmpirePlay`. The NPC and trait settings are already in that preset (written by the script from `docs/presets/EmpirePlay-mod-options.cfg`): no hostile bandits, at most 12 crew per player (the mod default is 30), no self-evolving traits. Raise the crew cap once the frame rate is known.
 2. Once in the game press **Numpad 9** and read the `[EmpireTest]` lines in `Zomboid\console.txt`. Any `FAIL` names the Empire feature that did not wire up on 42.22.2.
 3. After a session, search `console.txt` for `[EmpireAutoChores] auto-sort took`. Over about 250 ms means the base sort is too heavy: say so.
 4. Frame rate: if it is bad, switch the mod list to `EmpireB42-22-lean` on a new save and compare. The bake-off steps are in `PLAYTHROUGH-B42.22.md`.
