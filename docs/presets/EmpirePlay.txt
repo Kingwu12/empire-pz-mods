@@ -4,7 +4,6 @@ mods
 {
     mod = ClothingProtectionRebalanced,
     mod = Erikas_Tiles,
-    mod = Explosives,
     mod = simonMDsTiles,
     mod = melos_tiles_for_miles_pack,
     mod = PertsPartyTiles,
@@ -159,7 +158,11 @@ mods
     mod = 82oshkoshM911,
     mod = [B42] 815Tatra,
     mod = ammomaker,
-    mod = guns93,
+    mod = SWMG,
+    mod = GunsOfMarz,
+    mod = HeavyOrdnance,
+    mod = ReloadBackAgain,
+    mod = GunHitFix42_22,
     mod = Tempo_PerfKit,
     mod = VB_CommonSense,
     mod = MoodleFramework,
@@ -177,9 +180,6 @@ mods
     mod = EmpireProduction,
     mod = EmpireZones,
     mod = EmpireStockpiles,
-    mod = AmmoLootDropGuns93B42,
-    mod = AmmoLootDropGuns93B42Magazine,
-    mod = AmmoLootDropGuns93B42Weapon,
 }
 
 maps

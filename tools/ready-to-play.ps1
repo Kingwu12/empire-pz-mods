@@ -127,7 +127,10 @@ $wsId = @{ VB_CommonSense = '3750253491'; EvolvingTraitsWorld = '2914075159'; H_
            SimonMDLVHarbor = '3149613879'; simonMDsTiles = '2852704777'; 'Diederiks Tile Palooza' = '2337452747'; DylansTiles = '2599752664';
            melos_tiles_for_miles_pack = '2879745353'; tkTiles_01 = '2384329562'; UnofficialMappersCommunityTilePack = '3628736763';
            MoodleFramework = '3396446795';   # Moodle Framework: required by Evolving Traits World
-           ammomaker = '2788256295' }        # Ammo Maker: craft gunpowder and ammo from scratch (Guns of 93 has its own API table for it)
+           ammomaker = '2788256295';         # Ammo Maker: craft gunpowder and ammo from scratch (Guns of Marz has its own API table for it)
+           # Guns of Marz stack (27 Nov 2026; replaces Guns of 93)
+           SWMG = '3722064198'; GunsOfMarz = '3722134990'; HeavyOrdnance = '3802070967';
+           ReloadBackAgain = '3837229266'; GunHitFix42_22 = '3837999415' }
 $auditCsv = Join-Path $presetSrc 'pack-audit.csv'
 if (Test-Path $auditCsv) { foreach ($r in (Import-Csv $auditCsv)) { if (-not $wsId.ContainsKey($r.mod_id)) { $wsId[$r.mod_id] = $r.workshop_id } } }
 

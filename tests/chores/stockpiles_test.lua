@@ -29,6 +29,9 @@ end
 local sidetableN = #PD.BedroomSidetable.items
 local garageW = {}; for i = 1, #PD.GarageFirearms.items - 1, 2 do garageW[PD.GarageFirearms.items[i]] = PD.GarageFirearms.items[i + 1] end
 local trimmedBefore = #PD.GunStoreAmmunition.items
+-- what Guns of Marz adds to a home list (its ItemInsertion.lua): gun spawner items, plus one non-gun item
+table.insert(PD.GarageFirearms.items, "MarzGuns.World_Surplus_Rifle_Spawner"); table.insert(PD.GarageFirearms.items, 3)
+table.insert(PD.GarageFirearms.items, "MarzGuns.RepairPack"); table.insert(PD.GarageFirearms.items, 2)
 
 assert(load(SRC))()
 ok(handlers.pre and #handlers.pre == 1, "registers on OnPreDistributionMerge")
@@ -48,6 +51,8 @@ ok(PD.GarageFirearms.items[2] ~= nil, "garage items intact")
 local g2 = {}; for i = 1, #PD.GarageFirearms.items - 1, 2 do g2[PD.GarageFirearms.items[i]] = PD.GarageFirearms.items[i + 1] end
 ok(g2.Revolver == garageW.Revolver * 1.5, "garage gun weight x1.5 (Revolver " .. tostring(garageW.Revolver) .. " -> " .. tostring(g2.Revolver) .. ")")
 ok(g2.TissueBox == nil or g2.TissueBox == garageW.TissueBox, "non-arms entries untouched")
+ok(g2["MarzGuns.World_Surplus_Rifle_Spawner"] == 4.5, "a Guns of Marz gun spawner in a home list is scaled x1.5, got " .. tostring(g2["MarzGuns.World_Surplus_Rifle_Spawner"]))
+ok(g2["MarzGuns.RepairPack"] == 2, "a Guns of Marz non-gun item is left alone")
 
 -- port rooms
 ok(rooms.armyhanger == rooms.armystorage, "armyhanger aliases armystorage")

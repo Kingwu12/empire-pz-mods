@@ -84,7 +84,7 @@ local CFG = {
 
 local done = false
 
--- vanilla gun ids that home lists carry (Guns of '93 swaps these for its own Spawner items)
+-- vanilla gun ids that home lists carry (Guns of Marz and Guns of '93 swap these for their own *_Spawner items on creation)
 local VANILLA_GUNS = {
     Pistol = true, Pistol2 = true, Pistol3 = true, Revolver = true, Revolver_Long = true,
     Revolver_Short = true, Shotgun = true, DoubleBarrelShotgun = true,
@@ -182,7 +182,7 @@ local function apply()
 end
 
 -- Run when the distributions are about to merge: every mod's files have loaded by then
--- (so entries other mods add, like Guns of '93's, are in place), and the game has not yet
+-- (so entries other mods add, like Guns of Marz's MarzGuns.*_Spawner items, are in place), and the game has not yet
 -- read the tables. Vanilla's own room aliases hook the same event. apply() runs once.
 if Events and Events.OnPreDistributionMerge then Events.OnPreDistributionMerge.Add(apply) end
 if Events and Events.OnPostDistributionMerge then Events.OnPostDistributionMerge.Add(apply) end
