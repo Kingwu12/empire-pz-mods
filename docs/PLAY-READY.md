@@ -1,6 +1,6 @@
 # Play-ready: what was decided, and the one command (26 Nov 2026, Build 42.22.2)
 
-**Bottom line (27 Nov).** All 15 Workshop items are subscribed and downloaded (the old H.E.C.U. is unsubscribed), and the check says READY: 175 mods, every requirement present and in load order. What is left is to push the repo, run the script once on the PC to make `EmpirePlay` the default, and play.
+**Bottom line (27 Nov).** All 15 Workshop items are subscribed and downloaded (the old H.E.C.U. is unsubscribed), and the check says READY: 175 mods, every requirement present and in load order. `EmpirePlay` is already the default mod list on the PC and its sandbox preset has the NPC settings. The one thing left is to push the repo and pull it on the PC: until then the PC has the Empire mods from `8aca8cd`, without the newer automation (needs, farm, production, restock).
 
 ```
 .\tools\ready-to-play.ps1          (PowerShell on the PC, game closed; -Check only reports)
@@ -60,7 +60,7 @@ Tile packs hold no Lua, so they add loading time and some texture memory, not pe
 
 ## First play session
 
-1. New Game > Mods: `EmpirePlay` is already ticked. Sandbox: pick preset `EmpirePlay`. In the Sandbox mod options set Bandits NPC to **no hostile bandits** and keep the NPC count low; tell Claude after subscribing and it writes the exact keys into the preset.
+1. New Game > Mods: `EmpirePlay` is already ticked. Sandbox: pick preset `EmpirePlay`. The NPC and trait settings are already in that preset (written by the script from `docs/presets/EmpirePlay-mod-options.cfg`): no hostile bandits, at most 12 crew per player (the mod default is 30), no self-evolving traits. Raise the crew cap once the frame rate is known.
 2. Once in the game press **Numpad 9** and read the `[EmpireTest]` lines in `Zomboid\console.txt`. Any `FAIL` names the Empire feature that did not wire up on 42.22.2.
 3. After a session, search `console.txt` for `[EmpireAutoChores] auto-sort took`. Over about 250 ms means the base sort is too heavy: say so.
 4. Frame rate: if it is bad, switch the mod list to `EmpireB42-22-lean` on a new save and compare. The bake-off steps are in `PLAYTHROUGH-B42.22.md`.

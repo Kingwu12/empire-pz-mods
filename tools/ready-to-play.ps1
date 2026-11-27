@@ -210,6 +210,27 @@ if (-not $Check) {
         [System.IO.File]::WriteAllText($dst, $t2, (New-Object System.Text.UTF8Encoding($false)))
         Good "sandbox preset EmpirePlay created (your empire.cfg with zombie population Low)"
     }
+    # mod options for the EmpirePlay sandbox preset (NPCs, traits): written idempotently from docs\presets\EmpirePlay-mod-options.cfg
+    $optFile = Join-Path $presetSrc 'EmpirePlay-mod-options.cfg'
+    if ((Test-Path $dst) -and (Test-Path $optFile)) {
+        $t = [System.IO.File]::ReadAllText($dst); $orig = $t; $note = ''
+        foreach ($line in [System.IO.File]::ReadAllLines($optFile)) {
+            if ($line -match '^\s*$') { $note = ''; continue }
+            if ($line -match '^\s*#') { $note = $note + $line + "`r`n"; continue }
+            if ($line -match '^([A-Za-z0-9_.]+)=(.*)$') {
+                $k = $Matches[1]; $v = $Matches[2]
+                $re = '(?m)^' + [regex]::Escape($k) + '=[^\r\n]*'
+                if ([regex]::IsMatch($t, $re)) { $t = [regex]::Replace($t, $re, ($k + '=' + $v)) }
+                else { $t = $t.TrimEnd() + "`r`n`r`n" + $note + $k + '=' + $v + "`r`n" }
+                $note = ''
+            }
+        }
+        if ($t -ne $orig) {
+            if (-not (Test-Path ($dst + '.bak-empire'))) { Copy-Item $dst ($dst + '.bak-empire') }
+            [System.IO.File]::WriteAllText($dst, $t, (New-Object System.Text.UTF8Encoding($false)))
+            Good "mod options written to the EmpirePlay sandbox preset (no hostile bandits, crew cap, no dynamic traits)"
+        } else { Good "mod options already in the EmpirePlay sandbox preset" }
+    }
     if ($state[$Preset] -eq $true) {
         $def = Join-Path $modsDir 'default.txt'
         if ((Test-Path $def) -and (-not (Test-Path ($def + '.bak-empire')))) { Copy-Item $def ($def + '.bak-empire') }
