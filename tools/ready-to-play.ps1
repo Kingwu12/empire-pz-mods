@@ -126,7 +126,8 @@ $wsId = @{ VB_CommonSense = '3750253491'; EvolvingTraitsWorld = '2914075159'; H_
            # Louisville Shipping Port (the port map with the shipping containers) and the tile packs it needs
            SimonMDLVHarbor = '3149613879'; simonMDsTiles = '2852704777'; 'Diederiks Tile Palooza' = '2337452747'; DylansTiles = '2599752664';
            melos_tiles_for_miles_pack = '2879745353'; tkTiles_01 = '2384329562'; UnofficialMappersCommunityTilePack = '3628736763';
-           MoodleFramework = '3396446795' }   # Moodle Framework: required by Evolving Traits World
+           MoodleFramework = '3396446795';   # Moodle Framework: required by Evolving Traits World
+           ammomaker = '2788256295' }        # Ammo Maker: craft gunpowder and ammo from scratch (Guns of 93 has its own API table for it)
 $auditCsv = Join-Path $presetSrc 'pack-audit.csv'
 if (Test-Path $auditCsv) { foreach ($r in (Import-Csv $auditCsv)) { if (-not $wsId.ContainsKey($r.mod_id)) { $wsId[$r.mod_id] = $r.workshop_id } } }
 

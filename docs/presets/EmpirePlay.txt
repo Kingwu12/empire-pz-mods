@@ -157,6 +157,7 @@ mods
     mod = 80manKat1,
     mod = 82oshkoshM911,
     mod = [B42] 815Tatra,
+    mod = ammomaker,
     mod = guns93,
     mod = Tempo_PerfKit,
     mod = VB_CommonSense,
@@ -174,9 +175,6 @@ mods
     mod = EmpireLoot,
     mod = EmpireProduction,
     mod = EmpireZones,
-    mod = AmmoLootDropGuns93B42,
-    mod = AmmoLootDropGuns93B42Magazine,
-    mod = AmmoLootDropGuns93B42Weapon,
 }
 
 maps
