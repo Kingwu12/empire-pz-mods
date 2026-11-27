@@ -1,6 +1,6 @@
 # Play-ready: what was decided, and the one command (26 Nov 2026, Build 42.22.2)
 
-**Bottom line (27 Nov).** All 15 Workshop items are subscribed and downloaded (the old H.E.C.U. is unsubscribed), and the check says READY: 177 mods, every requirement present and in load order. `EmpirePlay` is already the default mod list on the PC and its sandbox preset has the NPC settings. The one thing left is to push the repo and pull it on the PC: until then the PC has the Empire mods from `8aca8cd`, without the newer automation (needs, farm, production, restock).
+**Bottom line (27 Nov).** All 15 Workshop items are subscribed and downloaded (the old H.E.C.U. is unsubscribed), and the check says READY: 178 mods, every requirement present and in load order. `EmpirePlay` is already the default mod list on the PC and its sandbox preset has the NPC settings. The one thing left is to push the repo and pull it on the PC: until then the PC has the Empire mods from `8aca8cd`, without the newer automation (needs, farm, production, restock).
 
 ```
 .\tools\ready-to-play.ps1          (PowerShell on the PC, game closed; -Check only reports)
@@ -14,7 +14,7 @@ If a Workshop item ever needs subscribing again, `.\tools\open-workshop-pages.ps
 |---|---|---|
 | Java mods or Lua? | **Lua only.** | The Indie Stone (21 Oct) support Lua only; Java mods break on updates, need a loader, and the Java NPC mod (Knox Survivors) was the one that froze 1-2 s. Java is faster per operation, but our lag is how often code runs, not the language. |
 | NPCs | **Bandits NPC + NPC Crew** (Lua, no loader). Alternative if it disappoints: Stay With Me. | Best colony features among Lua mods (beacon, zones, sorters, farmer, builder, hunter, loot runs). Cost grows with zombie count, so population is lowered below. |
-| Which pack | **`EmpirePlay`: 177 mods.** Fallback `EmpireB42-22-lean` (35 mods, the performance control). | Your 184-mod pack minus 21 (13 cut, 7 replaced, 1 Knox-only window), plus 7 maintained additions, the two libraries Evolving Traits World needs (Moodle Framework, Unified Carry Weight Framework) and the Louisville Shipping Port with the 4 tile packs its B42 version needs. |
+| Which pack | **`EmpirePlay`: 178 mods.** Fallback `EmpireB42-22-lean` (35 mods, the performance control). | Your 184-mod pack minus 20 (12 cut, 7 replaced, 1 Knox-only window), plus 7 maintained additions, the two libraries Evolving Traits World needs (Moodle Framework, Unified Carry Weight Framework) and the Louisville Shipping Port with the 4 tile packs its B42 version needs. |
 | Zombie population | **Low** (`Sandbox Presets\EmpirePlay.cfg`, a copy of your `empire.cfg` with `Zombies=5`). `empire.cfg` is untouched. | NPC mods cost frame time per zombie. Change it back in the sandbox screen if the run feels empty. |
 | JVM heap | **-Xms2048m -Xmx6144m**, applied. | Steam's update had reset it to stock 3 GB, probably the biggest cause of the old lag. Re-run the script after every game update. |
 | Sorting and chores | **Automatic** (`13_AutoChores`): corpse looting, base sort, park and unload, one 10-minute beat, no per-frame work. Numpad 5 turns it off. | "I love empire building but dont like the sorting and small things." |
@@ -78,6 +78,12 @@ You asked for fun guns, mods and vehicles, with ammo piled up in the places that
 | Homes | gun and ammo entries already in the bedroom, closet, wardrobe, garage and hunting-locker lists are 1.5 to 2 times likelier, and those spots get the odd box of ammo (9mm, .38, .45, shotgun shells, .308, .30-30) at 0.2 to 5 percent per roll | "sometimes in people's homes" |
 
 Everything else (random houses, shops, streets) stays at the normal dial, and zombies only carry ammo if they were armed outfits, so the open world is still tight. All numbers are at the top of `EmpireStockpiles.lua` if it feels too rich or too poor. A mock test runs the mod against the real vanilla loot tables (19 checks, `tests/chores/stockpiles_test.lua`). **Not tested in the game yet:** the first thing to check is the line `[EmpireStockpiles] applied: rolls on 19 lists, ... 3 port rooms` in `console.txt`, then open the first gun store and the port.
+
+## Looking through base storage (27 Nov, your call: no opening chests one by one)
+
+- **Proximity Inventory is back in the pack** (`ProximityInventory`, 178th mod). It adds one "Proximity" tab to the loot window that lists everything in the containers around you. I had cut it for cost (it rebuilds that list on every refresh, so it gets slower with thousands of items nearby), which was the wrong trade for how you play.
+- It sees what the loot window sees (the containers next to you), not the whole base. For the whole base: **Numpad 2** (or right-click inventory, "Find item in base...") types a name and lights up every chest holding it, within 14 tiles, all floors.
+- EmpireSortAll does not read the loot window, so the two do not collide. If a big base makes the Proximity tab stutter, switch the mod off in the Mods screen and rely on Numpad 2 plus auto-sort.
 
 ## What the check found (so you do not have to)
 

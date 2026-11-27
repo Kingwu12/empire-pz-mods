@@ -57,6 +57,7 @@ mods
     mod = Project_Cook,
     mod = Project_Cook_Pixel_Icon_Pack,
     mod = AccessibleContainers,
+    mod = ProximityInventory,
     mod = BIASC,
     mod = WashFix,
     mod = HereGoesTheSun,
