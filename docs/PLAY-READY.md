@@ -6,6 +6,8 @@
 .\tools\ready-to-play.ps1          (PowerShell on the PC, game closed; -Check only reports)
 ```
 
+Quickest way to subscribe: run `.\tools\open-workshop-pages.ps1` in PowerShell on the PC. It opens the 15 pages below one at a time in your signed-in Steam client, so each is one click (the last one is the Unsubscribe).
+
 ## The decisions
 
 | Question | Decision | Why |
