@@ -1,0 +1,26 @@
+/*
+ * Tatra 815 6X6 (plain): fix a forward-slow / reverse-fine gearbox.
+ *
+ * The Tatra mod ships Tatra8156X6 with forward gears 1.00 / 0.7 / 0.4 / 0.2 and reverse 3.5.
+ * The engine multiplies engineForce by the gear ratio, so reverse pulls 3.5x while 1st gear
+ * pulls 1.0x and top gear 0.2x (vanilla cars: 3.6 / 2.2 / 1.3 / 1.0, reverse 4.7). Result: the
+ * truck crawls forward and is fine backwards. The Civil and FD variants of the same mod use
+ * 4.0 / 3.0 / 2.4 / 1.2 with reverse 4.5; the plain 6X6 gets the same set.
+ *
+ * B42 merges a second `vehicle` block with the same name into the first (ScriptBucket keeps a
+ * list of bodies per script name and loads them in mod load order), and VehicleScript.Load only
+ * assigns the fields it sees, so only the gears change. EmpireQoL must load after
+ * [B42] 815Tatra in the preset (it does in EmpirePlay and EmpireStable).
+ */
+module Base
+{
+    vehicle Tatra8156X6
+    {
+        gearRatioCount = 4,
+        gearRatioR = 4.5,
+        gearRatio1 = 4.00,
+        gearRatio2 = 3.00,
+        gearRatio3 = 2.4,
+        gearRatio4 = 1.2,
+    }
+}
