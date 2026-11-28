@@ -466,6 +466,12 @@ Events.OnExitVehicle.Add(function(ch)
     if isLocal(ch) then pcall(onExitVehicle, ch) end
 end)
 
+-- 18_Waypoints calls this after it teleports a truck into place. Same as parking at the dock: the unload beat
+-- re-checks that the truck is at the dock and that he is home, so a trip that lands elsewhere unloads nothing.
+EmpireAutoChores.armUnload = function(veh)
+    if veh and state.on and CFG.UNLOAD_ENABLED and not state.off.unload then state.pendingUnload = veh end
+end
+
 -- ---- taking things off the base's own shelves: hold them ----
 -- Vanilla moves every item through ISInventoryTransferAction:transferItem (drag, grab, "transfer all",
 -- a vanilla craft gathering its ingredients). From a container that is not his onto him, while he is in

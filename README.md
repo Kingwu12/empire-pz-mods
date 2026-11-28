@@ -13,7 +13,7 @@ Each top-level `Empire*/` folder is one standalone mod. "B42" means the mod has 
 
 | Mod | Layout | What it does |
 |---|---|---|
-| **EmpireQoL** | B42 | The largest mod. Base registry and live material cache; craft/build and vehicle mechanics drawing materials from nearby base storage; one-click vehicle **Quick repair** and **Quick replace** from base stock (with Vehicle Repair Overhaul integration); corpse vacuum; **auto-chores** (hands-free corpse looting and smart sort at base, below); find item in base; top off magazines; reload from worn gear; no sleep confirmation; delete item; remove un-openable safes; roof-collector plumbing; vehicle unstick; KI5 M998 Humvee part compatibility; context-menu width cache (right-click freeze fix); server-side loot buffs for ammo and residential guns; an in-game self-test (`49_AutoTest.lua`). |
+| **EmpireQoL** | B42 | The largest mod. Base registry and live material cache; craft/build and vehicle mechanics drawing materials from nearby base storage; **waypoint travel that takes your truck along** (`18_Waypoints.lua`, see `docs/RIVERSIDE-BASE.md`); one-click vehicle **Quick repair** and **Quick replace** from base stock (with Vehicle Repair Overhaul integration); corpse vacuum; **auto-chores** (hands-free corpse looting and smart sort at base, below); find item in base; top off magazines; reload from worn gear; no sleep confirmation; delete item; remove un-openable safes; roof-collector plumbing; vehicle unstick; KI5 M998 Humvee part compatibility; context-menu width cache (right-click freeze fix); server-side loot buffs for ammo and residential guns; an in-game self-test (`49_AutoTest.lua`). |
 | **EmpireSortAll** | B42 | One-button smart sort of inventory into nearby containers by category; containers can be locked to a category from the world right-click menu. |
 | **EmpireZones** | B42 | Paint freeform, multi-floor base/work zones (base, farm, guard, workshop, storage), persisted in the save. |
 | **EmpireStockpiles** | B42 | Ammo and guns pile up where they should (gun stores, police, army, the Louisville port cargo, a little in homes) while the open world stays tight. One-shot edit of vanilla loot lists at load, no runtime cost. |
@@ -74,6 +74,7 @@ Supporting changes: `EmpireZones.version` plus a cache in `EmpireBases.getEmpire
 
 | Key | Mod | Action |
 |---|---|---|
+| Numpad 1 | EmpireQoL | Waypoints: home / back (takes your truck along) |
 | Numpad 2 | EmpireQoL | Find item in base |
 | Numpad 3 | EmpireSortAll | Smart sort |
 | Numpad 5 | EmpireQoL | Auto-chores on/off |
