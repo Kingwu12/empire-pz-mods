@@ -53,7 +53,10 @@ local function sqFor(x, y, z)
           getProperties = function() return {Is = function() return false end} end}
 end
 function getCell() return {
-  getVehicles = function() return {size = function() return #world.vehicles end, get = function(_, i) return world.vehicles[i + 1] end} end,
+  -- 42.22: java.util.Set, iterator only (no get(i): calling it throws)
+  getVehicles = function() return {size = function() return #world.vehicles end,
+    iterator = function() local i = 0; return {hasNext = function() return i < #world.vehicles end,
+      next = function() i = i + 1; return world.vehicles[i] end} end} end,
   getGridSquare = function(_, x, y, z) return sqFor(x, y, z) end} end
 
 local function newVehicle(id, name, x, y)

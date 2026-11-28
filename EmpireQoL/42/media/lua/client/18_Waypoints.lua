@@ -94,13 +94,15 @@ local function eachVehicle(fn)
     local set = nil
     pcall(function() set = getCell():getVehicles() end)
     if not set then return end
+    -- IsoCell.getVehicles() returns a java.util.Set in 42.22: there is no get(i), and calling it makes the engine
+    -- log a Java stack on every right-click. Iterate; size()/get(i) is only a last resort.
     local ok = pcall(function()
-        for i = 1, set:size() do fn(set:get(i - 1)) end
+        local it = set:iterator()
+        while it:hasNext() do fn(it:next()) end
     end)
     if not ok then
         pcall(function()
-            local it = set:iterator()
-            while it:hasNext() do fn(it:next()) end
+            for i = 1, set:size() do fn(set:get(i - 1)) end
         end)
     end
 end
