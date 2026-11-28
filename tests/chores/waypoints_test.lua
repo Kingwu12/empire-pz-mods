@@ -29,6 +29,13 @@ ISContextMenu = {getNew = function(_, parent) local m = {opts = {}, subs = {}}
   m.addSubMenu = function(self, opt, sub) opt.sub = sub end
   return m end}
 
+-- world map mock (vanilla ISWorldMap.onRightMouseUp is debug-only; the mod wraps it)
+local mapState = {debug = false, symbols = false, invalid = false, origCalls = 0, ctx = nil}
+ISContextMenu.get = function(pn, x, y) mapState.ctx = ISContextMenu:getNew(nil); return mapState.ctx end
+ISWorldMap = {onRightMouseUp = function(self, x, y) mapState.origCalls = mapState.origCalls + 1; return mapState.symbols end}
+function getDebug() return mapState.debug end
+function getWorld() return {getMetaGrid = function() return {isValidChunk = function() return not mapState.invalid end} end} end
+
 -- physics offsets: the transform origin is (worldX - OFFX, height, worldY - OFFY)
 local OFFX, OFFY = 1000, 2000
 local function vec(x, y, z) local v = {X = x, Y = y, Z = z}
@@ -217,5 +224,36 @@ fire("OnFillWorldObjectContextMenu", 0, menu, {}, true)
 expect("menu skipped on the test pass", #menu.opts == 1)
 W.delete(P, "Mall")
 expect("delete removes it", #W.store().list == 1)
+
+
+-- 13. world map right-click (outside debug)
+reset(); fire("OnGameStart")
+local mapObj = {mapAPI = {uiToWorldX = function(_, x, y) return 3000 + x end, uiToWorldY = function(_, x, y) return 4000 + y end},
+  getAbsoluteX = function() return 0 end, getAbsoluteY = function() return 0 end}
+fire("OnGameStart")   -- wrapping is idempotent
+mapState.origCalls = 0; mapState.ctx = nil
+local handled = ISWorldMap.onRightMouseUp(mapObj, 10, 20)
+local mnames = {}
+for _, o in ipairs(mapState.ctx and mapState.ctx.opts or {}) do mnames[#mnames + 1] = o.name end
+local mj = table.concat(mnames, "|")
+expect("map click: vanilla handler still runs once", mapState.origCalls == 1)
+expect("map click outside debug shows Travel here + Save", handled == true and mj:find("Travel here") and mj:find("Save a waypoint here") and not mj:find("with the"))
+local mtruck = newVehicle(30, "Tatra815", 105, 100); P.vehicle = mtruck
+ISWorldMap.onRightMouseUp(mapObj, 10, 20)
+mnames = {}
+for _, o in ipairs(mapState.ctx.opts) do mnames[#mnames + 1] = o.name end
+expect("map click with your truck near offers 'with the Tatra815'", table.concat(mnames, "|"):find("Travel here with the Tatra815"))
+P.vehicle = nil
+expect("travelXY goes to the map point at ground level", W.travelXY(P, 3010, 4020, false) and P.tp[#P.tp].x == 3010 and P.tp[#P.tp].y == 4020 and P.tp[#P.tp].z == 0)
+ticks(20)
+expect("saveAt stores a map point with no truck spot", W.saveAt(P, "Far farm", 7000, 8000) and W.store().list[#W.store().list].fromMap == true and W.store().list[#W.store().list].hasV == false)
+mapState.ctx = nil; mapState.debug = true
+local r = ISWorldMap.onRightMouseUp(mapObj, 10, 20)
+expect("debug mode keeps the vanilla menu (no Empire entries)", mapState.ctx == nil and r == false)
+mapState.debug = false; mapState.symbols = true
+expect("a click the map symbols UI used is left alone", ISWorldMap.onRightMouseUp(mapObj, 10, 20) == true and mapState.ctx == nil)
+mapState.symbols = false; mapState.invalid = true
+ISWorldMap.onRightMouseUp(mapObj, 10, 20)
+expect("a point outside the map shows nothing", mapState.ctx == nil)
 
 print(n .. " checks, " .. fails .. " failed"); if fails > 0 then error("failures") end

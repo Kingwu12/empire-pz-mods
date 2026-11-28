@@ -10,6 +10,7 @@ inside. The compound is about 6,200 tiles from Echo Creek, so we travel by waypo
   "Back to where I left from", "Save a waypoint here...", "Delete a waypoint".
 - **Numpad 1** is the one-press loop. Away from the base it takes you home (the waypoint called `Base`).
   At the base it takes you back to where the last trip started, truck parked on the exact spot you left it.
+- **From the world map (no need to be there):** open the map, right-click a spot > "Empire: Travel here" (or "with the <truck>", or "Save a waypoint here..."). Vanilla only offers "Teleport Here" on the map in debug mode; this works without debug. Save a waypoint named `Base` from the exact parking lot on the map to replace the seed.
 - A first-run waypoint `Base` is seeded at the map-tooltip coordinates (6032, 5238). It has no truck spot yet.
 - **Which truck comes:** the one you sit in, or the last vehicle you got into if it is within 14 tiles. From the
   right-click menu the nearest vehicle within 8 tiles can be picked too. A random wreck is never taken by

@@ -363,24 +363,46 @@ end
 
 -- ---------- saving ----------
 
-function W.saveHere(player, name)
-    name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
-    if name == "" then say(player, "A waypoint needs a name", "bad"); return false end
+local function putWaypoint(player, name, wp, veh)
     local d = store()
     local i = indexOf(d, name)
     if not i and #d.list >= CFG.MAX_WAYPOINTS then
         say(player, "Waypoint list is full (" .. CFG.MAX_WAYPOINTS .. "): delete one first", "bad")
         return false
     end
-    local wp = { name = name, x = player:getX(), y = player:getY(), z = player:getZ(), hasV = false }
+    wp.name = name
+    if i then d.list[i] = wp else d.list[#d.list + 1] = wp end
+    say(player, (i and "Updated" or "Saved") .. " waypoint " .. name
+        .. (wp.hasV and (" (truck spot saved: " .. vehName(veh) .. ")")
+            or (wp.fromMap and " (from the map)" or " (on foot: stand next to your truck to save a truck spot)")), "ok")
+    return true
+end
+
+local function cleanName(name)
+    name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    return name
+end
+
+function W.saveHere(player, name)
+    name = cleanName(name)
+    if name == "" then say(player, "A waypoint needs a name", "bad"); return false end
+    local wp = { x = player:getX(), y = player:getY(), z = player:getZ(), hasV = false }
     local veh = pickVehicle(player, true)
     if veh then
         wp.hasV, wp.vx, wp.vy, wp.vz = true, veh:getX(), veh:getY(), veh:getZ()
     end
-    if i then d.list[i] = wp else d.list[#d.list + 1] = wp end
-    say(player, (i and "Updated" or "Saved") .. " waypoint " .. name
-        .. (wp.hasV and (" (truck spot saved: " .. vehName(veh) .. ")") or " (on foot: stand next to your truck to save a truck spot)"), "ok")
-    return true
+    return putWaypoint(player, name, wp, veh)
+end
+
+-- a point picked on the world map: no truck spot (the truck keeps its layout around you on arrival)
+function W.saveAt(player, name, x, y)
+    name = cleanName(name)
+    if name == "" then say(player, "A waypoint needs a name", "bad"); return false end
+    return putWaypoint(player, name, { x = x, y = y, z = 0, hasV = false, fromMap = true }, nil)
+end
+
+function W.travelXY(player, x, y, withVeh)
+    return W.travel(player, { name = "the map point", x = x, y = y, z = 0, hasV = false }, withVeh)
 end
 
 function W.delete(player, name)
@@ -411,19 +433,21 @@ end
 
 -- ---------- right-click menu ----------
 
-local function onSaveName(target, button, playerNum)
+local function onSaveName(target, button, playerNum, x, y)
     if button.internal ~= "OK" then return end
     local p = getSpecificPlayer(playerNum or 0)
     local nm = nil
     pcall(function() nm = button.parent.entry:getText() end)
-    if p and nm then W.saveHere(p, nm) end
+    if not (p and nm) then return end
+    if x and y then W.saveAt(p, nm, x, y) else W.saveHere(p, nm) end
 end
 
-local function promptSave(player)
+-- x, y given: the point was picked on the world map
+local function promptSave(player, x, y)
     local pn = 0
     pcall(function() pn = player:getPlayerNum() end)
     local modal = ISTextBox:new(0, 0, 300, 180, "Waypoint name (same name updates it):",
-        "", nil, onSaveName, pn, pn)
+        "", nil, onSaveName, pn, pn, x, y)
     modal:initialise()
     modal:addToUIManager()
 end
@@ -460,6 +484,42 @@ local function onFill(playerNum, context, worldobjects, test)
     end
 end
 Events.OnFillWorldObjectContextMenu.Add(onFill)
+
+-- ---------- world map right-click ----------
+-- Vanilla's map menu (Teleport Here -> player:teleportTo(x, y, 0)) only exists in debug mode. Outside debug we
+-- add our own: right-click a spot on the world map to travel there, with your truck, or save it as a waypoint.
+local function wrapWorldMap()
+    if not (ISWorldMap and ISWorldMap.onRightMouseUp) or ISWorldMap.empireWaypointsWrapped then return end
+    ISWorldMap.empireWaypointsWrapped = true
+    local orig = ISWorldMap.onRightMouseUp
+    ISWorldMap.onRightMouseUp = function(self, x, y)
+        local r = orig(self, x, y)
+        if r then return r end                               -- the map symbols UI used the click
+        local debug = false
+        pcall(function() debug = getDebug() end)
+        if debug then return r end                           -- debug mode keeps the vanilla menu
+        local player = getSpecificPlayer(0)
+        if not player or player:isDead() then return r end
+        local wx, wy, valid = nil, nil, false
+        pcall(function()
+            wx, wy = self.mapAPI:uiToWorldX(x, y), self.mapAPI:uiToWorldY(x, y)
+            valid = getWorld():getMetaGrid():isValidChunk(wx / 10, wy / 10)
+        end)
+        if not (wx and valid) then return r end
+        local ok = pcall(function()
+            local context = ISContextMenu.get(0, x + self:getAbsoluteX(), y + self:getAbsoluteY())
+            local veh = pickVehicle(player, false)
+            if veh then
+                context:addOption("Empire: Travel here with the " .. vehName(veh), player, W.travelXY, wx, wy, true)
+            end
+            context:addOption("Empire: Travel here" .. (veh and " on foot" or ""), player, W.travelXY, wx, wy, false)
+            context:addOption("Empire: Save a waypoint here...", player, promptSave, wx, wy)
+        end)
+        return ok
+    end
+end
+Events.OnGameStart.Add(wrapWorldMap)
+pcall(wrapWorldMap)
 
 -- ---------- keys, vehicle memory, first-run seed ----------
 
