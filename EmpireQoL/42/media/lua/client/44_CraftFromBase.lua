@@ -13,6 +13,23 @@ local RADIUS   = 16
 local TTL_MS   = 10000
 local _cache, _cacheKey, _cacheAt = nil, nil, 0
 
+-- Quartermaster stamp. The consume-time rescue and the manual-input remap further down are ONLY
+-- for crafts that went through the quartermaster (QM fetched items from base storage onto the
+-- player). A vanilla double-click ("open box") is NOT one of them: its manual selection is the
+-- exact item the player clicked and must be left alone. 28 Nov 2026: the rescue ran on every craft
+-- (canPerform reads false at consume time even when the craft works), dropped to auto-select, and
+-- tag inputs such as marzguns:ammobox20 then matched ANY caliber, so opening a 7.62 box opened a
+-- .223 box instead.
+local QM_WINDOW_MS = 120000
+local _qmStamp, _qmRecipeName = 0, nil
+local function qmCraftFresh(logic)
+    if (getTimestampMs() - _qmStamp) > QM_WINDOW_MS then return false end
+    if not _qmRecipeName then return true end
+    local nm = nil
+    pcall(function() nm = logic and logic:getRecipe() and logic:getRecipe():getName() end)
+    return nm == nil or nm == _qmRecipeName
+end
+
 local function proximityContainers(player)
     local sq = player and player:getSquare()
     if not sq then return nil end
@@ -199,6 +216,7 @@ function EmpireQoL_FetchForRecipe(playerObj, recipe, times)
         print("[EmpireQoL] CraftFromBase: build quartermaster fetched " .. #fetched .. " item(s) to player")
         pcall(function() if EmpireBaseCache and EmpireBaseCache.invalidate then EmpireBaseCache.invalidate() end end)
     end
+    return #fetched
 end
 
 local function fetchForBuild(panel)
@@ -292,7 +310,14 @@ Events.OnGameStart.Add(function()
             ncap.startHandcraft = function(self, force, craftTimes, ...)
                 pcall(function()
                     local rec = self.logic and self.logic:getRecipe()
-                    if rec then EmpireQoL_FetchForRecipe(self.player, rec, craftTimes or 1) end
+                    if rec then
+                        local n = EmpireQoL_FetchForRecipe(self.player, rec, craftTimes or 1)
+                        if n and n > 0 then
+                            _qmStamp = getTimestampMs()
+                            _qmRecipeName = nil
+                            pcall(function() _qmRecipeName = rec:getName() end)
+                        end
+                    end
                 end)
                 -- re-resolve selection onto the freshly-carried items (see build note)
                 pcall(function()
@@ -361,7 +386,7 @@ Events.OnGameStart.Add(function()
                     -- MP (fixMovedItems is isClient-gated). Do the SP equivalent:
                     -- keep refs that are on the player, substitute same-fullType
                     -- carried items for any ref that is not.
-                    if self.manualInputs and self.character then
+                    if self.manualInputs and self.character and qmCraftFresh(self.logic) then
                         local inv = self.character:getInventory()
                         local remapped, unresolved = 0, 0
                         local usedIds = {}
@@ -416,7 +441,7 @@ Events.OnGameStart.Add(function()
             local prevPR = hca.performRecipe
             hca.performRecipe = function(self, ...)
                 pcall(function()
-                    if self.logic and self.logic.canPerformCurrentRecipe then
+                    if self.logic and self.logic.canPerformCurrentRecipe and qmCraftFresh(self.logic) then
                         local ok = self.logic:canPerformCurrentRecipe()
                         print("[EmpireQoL] craft QM: consume-time canPerform = " .. tostring(ok))
                         if ok == false then
