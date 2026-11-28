@@ -62,7 +62,7 @@ local KIND = {}   -- fullType -> "food" | "fluid" | "opener" | false
 local function isOpener(it)
     local ok = false
     pcall(function() if ItemTag and ItemTag.CAN_OPENER and it:hasTag(ItemTag.CAN_OPENER) then ok = true end end)
-    if not ok then pcall(function() if it:hasTag("CanOpener") then ok = true end end) end
+    -- (a String tag throws "expected argument of type ItemTag" in 42.22; the item-type check below covers openers)
     if not ok then
         local t = m(it, "getType")
         if type(t) == "string" and (t:find("TinOpener") or t:find("CanOpener")) then ok = true end

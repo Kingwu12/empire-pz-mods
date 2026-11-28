@@ -73,7 +73,9 @@ end
 local function hasPipeWrench(playerObj)
     local inv = playerObj:getInventory()
     if inv:containsTypeRecurse("PipeWrench") then return true end
-    local ok,r = pcall(function() return inv:containsTagRecurse("PipeWrench") end)
+    -- B42.22: containsTagRecurse wants an ItemTag object (a String throws and logs a Java stack on every right-click)
+    if not (ItemTag and ItemTag.PIPE_WRENCH) then return false end
+    local ok,r = pcall(function() return inv:containsTagRecurse(ItemTag.PIPE_WRENCH) end)
     return ok and r or false
 end
 
@@ -114,7 +116,7 @@ end
 local function onConnect(worldobjects, player, sink)
     local playerObj = getSpecificPlayer(player)
     local wrench = playerObj:getInventory():getFirstTypeRecurse("PipeWrench")
-    if not wrench then pcall(function() wrench = playerObj:getInventory():getFirstTagRecurse("PipeWrench") end) end
+    if not wrench and ItemTag and ItemTag.PIPE_WRENCH then pcall(function() wrench = playerObj:getInventory():getFirstTagRecurse(ItemTag.PIPE_WRENCH) end) end
     if not wrench then return end
     ISWorldObjectContextMenu.equip(playerObj, playerObj:getPrimaryHandItem(), wrench, true)
     ISTimedActionQueue.add(ISEmpireRoofConnect:new(playerObj, sink, wrench))
