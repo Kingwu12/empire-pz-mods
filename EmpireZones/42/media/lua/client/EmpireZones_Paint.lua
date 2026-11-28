@@ -98,6 +98,66 @@ local function floodDetect(startSq, passDoors)
     return order, #order
 end
 
+-- the smart define, shared by the right-click entry and the Empire menu (21_EmpireMenu.lua): flood-fill the walled
+-- area around `sq` and stamp every real floor of it into the base zone
+local function autoDetectAt(pl, sq, playerNum)
+    local x, y, z = sq:getX(), sq:getY(), sq:getZ()
+    local tiles, n = floodDetect(sq, true)
+    local mode = "doors passed"
+    if not tiles then
+        tiles, n = floodDetect(sq, false)
+        mode = "strict -- fill leaked through an open gate/door, so doors blocked this run"
+    end
+    if not tiles then
+        halo(pl, "Area not enclosed (fill escaped even with doors blocked). Close the perimeter and retry.")
+        return
+    end
+    local zone = ensureBaseZone()
+    local down = (EmpireBases and EmpireBases.BASEMENT_REACH) or 6
+    local up   = (EmpireBases and EmpireBases.FLOOR_SPREAD) or 2
+    local cell2 = getCell()
+    local painted = 0
+    for _, t in ipairs(tiles) do
+        for z2 = z - down, z + up do
+            local okz = (z2 == z)
+            if not okz then
+                local s2 = cell2:getGridSquare(t[1], t[2], z2)
+                if s2 then
+                    local fl = nil
+                    pcall(function() fl = s2:getFloor() end)
+                    okz = fl ~= nil
+                end
+            end
+            if okz then EZ.addTile(zone.id, t[1], t[2], z2); painted = painted + 1 end
+        end
+    end
+    showZone(playerNum, zone)
+    halo(pl, "Auto-detected " .. #tiles .. " footprint tiles -> " .. painted .. " painted incl. basement (" .. mode .. "). Total: " .. EZ.tileCount(zone) .. ".")
+    pcall(function() if EmpireBases and EmpireBases.syncKSToOurBase then EmpireBases.syncKSToOurBase(pl) end end)
+end
+
+EmpireZonesPaint = {
+    -- the existing base zone, or nil (never creates one)
+    baseZone = function()
+        for _, zz in pairs(EZ.all()) do if zz.type == "base" then return zz end end
+        return nil
+    end,
+    -- define the base from the tile the player stands on
+    autoDetect = function(player)
+        local pl = pObj(player or 0)
+        local sq = pl and pl:getCurrentSquare() or nil
+        if not sq then return false end
+        autoDetectAt(pl, sq, pNum(player or 0))
+        return true
+    end,
+    show = function(player)
+        local zz = EmpireZonesPaint.baseZone()
+        if zz then showZone(pNum(player or 0), zz) end
+        return zz ~= nil
+    end,
+    hide = function(player) clearShown(pNum(player or 0)) end,
+}
+
 local function onFill(player, context, worldobjects)
     local pl = pObj(player); if not pl then return end
     local sq = clickedSquare(worldobjects, player); if not sq then return end
@@ -115,38 +175,7 @@ local function onFill(player, context, worldobjects)
 
     -- 1) THE smart define: flood-fill the walled area, stamp every real floor
     sub:addOption("AUTO-DETECT base here (walled area, all floors + basement)", pl, function()
-        local tiles, n = floodDetect(sq, true)
-        local mode = "doors passed"
-        if not tiles then
-            tiles, n = floodDetect(sq, false)
-            mode = "strict -- fill leaked through an open gate/door, so doors blocked this run"
-        end
-        if not tiles then
-            halo(pl, "Area not enclosed (fill escaped even with doors blocked). Close the perimeter and retry.")
-            return
-        end
-        local zone = ensureBaseZone()
-        local down = (EmpireBases and EmpireBases.BASEMENT_REACH) or 6
-        local up   = (EmpireBases and EmpireBases.FLOOR_SPREAD) or 2
-        local cell2 = getCell()
-        local painted = 0
-        for _, t in ipairs(tiles) do
-            for z2 = z - down, z + up do
-                local okz = (z2 == z)
-                if not okz then
-                    local s2 = cell2:getGridSquare(t[1], t[2], z2)
-                    if s2 then
-                        local fl = nil
-                        pcall(function() fl = s2:getFloor() end)
-                        okz = fl ~= nil
-                    end
-                end
-                if okz then EZ.addTile(zone.id, t[1], t[2], z2); painted = painted + 1 end
-            end
-        end
-        showZone(playerNum, zone)
-        halo(pl, "Auto-detected " .. #tiles .. " footprint tiles -> " .. painted .. " painted incl. basement (" .. mode .. "). Total: " .. EZ.tileCount(zone) .. ".")
-        pcall(function() if EmpireBases and EmpireBases.syncKSToOurBase then EmpireBases.syncKSToOurBase(pl) end end)
+        autoDetectAt(pl, sq, playerNum)
     end)
 
     -- 2) patch a hole the fill missed (tree shadows etc.)

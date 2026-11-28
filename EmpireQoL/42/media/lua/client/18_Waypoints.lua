@@ -46,6 +46,7 @@ local CFG = {
     VERIFY_EVERY   = 20,    -- and only does anything on every Nth tick
     VEHICLE_TOL    = 6,     -- tiles: the vehicle counts as arrived when it is this close to its target
     VEHICLE_TRIES  = 4,     -- looks for the vehicle after the destination loaded, before reporting it missing
+    VEHICLE_FIXES  = 3,     -- times the vehicle is shifted onto its target again when it landed off (see onTick)
     SAFE_RADIUS    = 10,    -- tiles searched for a free square when the arrival square is blocked
     SEED = { name = "Base", x = 6032, y = 5238, z = 0 },  -- Riverside police / fire station compound (King's map pick)
 }
@@ -67,6 +68,8 @@ local function say(player, msg, kind)
     end
     print(TAG .. msg)
 end
+
+W.say = say
 
 local function store()
     local d = ModData.getOrCreate("EmpireWaypoints")
@@ -118,6 +121,7 @@ local function vehName(v)
     pcall(function() n = (tostring(v:getScriptName() or n):gsub("^Base%.", "")) end)
     return n
 end
+W.vehicleName = vehName
 
 local function isTowing(v)
     local t = false
@@ -170,7 +174,10 @@ end
 
 -- BaseVehicle.setWorldTransform -> Bullet.teleportVehicle. The transform origin is (worldX, height, worldY)
 -- in the physics frame, so we shift it by the world delta instead of relying on the engine's offsets.
-local function moveVehicle(veh, x, y, z)
+-- 28 Nov 2026, first real trip: the truck landed 69 tiles from the target (about 49 on each axis), because the
+-- physics frame re-centres when the player teleports. The arrival check therefore calls this again, from where
+-- the truck actually is once the destination has loaded (closed loop), and every call logs what it saw.
+local function moveVehicle(veh, x, y, z, why)
     local ok = false
     pcall(function()
         -- allocTransform is STATIC in the jar (class BaseVehicle); Transform.new() is the public constructor
@@ -180,11 +187,15 @@ local function moveVehicle(veh, x, y, z)
         if not t then return end
         veh:getWorldTransform(t)
         local o = t:getOrigin()
-        local dx, dy, dz = x - veh:getX(), y - veh:getY(), z - veh:getZ()
-        o:set(o:x() + dx, o:y() + dz, o:z() + dy)
+        local ox, oy, oz = o:x(), o:y(), o:z()
+        local vx, vy, vz = veh:getX(), veh:getY(), veh:getZ()
+        local dx, dy, dz = x - vx, y - vy, z - vz
+        o:set(ox + dx, oy + dz, oz + dy)
         veh:setWorldTransform(t)
         if pooled then pcall(function() BaseVehicle.releaseTransform(t) end) end
         ok = true
+        print(string.format(TAG .. "move%s: world (%.1f,%.1f,%.1f) physics origin (%.1f,%.1f,%.1f) shifted by (%.1f,%.1f,%.1f)",
+            why and (" " .. why) or "", vx, vy, vz, ox, oy, oz, dx, dy, dz))
     end)
     -- also write the fields: if the chunk unloads before the next physics update the vehicle database
     -- saves the vehicle where these say it is (the destination), not where it was
@@ -268,11 +279,12 @@ onTick = function()
     end
     p.tries = p.tries + 1
     local v = findVehicle(p.vid)
-    local d = nil
-    if v then pcall(function() d = dist(v:getX(), v:getY(), p.vtx, p.vty) end) end
+    local d, vx, vy = nil, nil, nil
+    if v then pcall(function() vx, vy = v:getX(), v:getY(); d = dist(vx, vy, p.vtx, p.vty) end) end
     print(TAG .. "check " .. p.tries .. ": vehicle " .. p.vname .. " id=" .. tostring(p.vid)
-        .. (v and (" found " .. string.format("%.1f", d or -1) .. " tiles from target") or " not in the loaded world")
-        .. " ticks=" .. p.ticks)
+        .. ((v and d) and string.format(" found at (%.0f,%.0f), %.1f tiles from target (%.0f,%.0f)", vx, vy, d, p.vtx, p.vty)
+            or " not in the loaded world")
+        .. " fixes=" .. tostring(p.fixes) .. " ticks=" .. p.ticks)
     if v and d and d <= CFG.VEHICLE_TOL then
         pcall(function() v:setPhysicsActive(true) end)
         local msg = "Arrived at " .. p.name .. " with the " .. p.vname
@@ -286,11 +298,26 @@ onTick = function()
         end)
         return finish(p, msg, "ok")
     end
+    if v and d and p.fixes < CFG.VEHICLE_FIXES and not timeout then
+        -- it is here but not where it should be: shift it by the error we can now measure, then look again
+        p.fixes = p.fixes + 1
+        local moved = moveVehicle(v, p.vtx, p.vty, p.vtz, "fix " .. p.fixes)
+        print(string.format(TAG .. "fix %d: %s was %.1f tiles off at (%.0f,%.0f); shifted onto (%.0f,%.0f) moved=%s",
+            p.fixes, p.vname, d, vx, vy, p.vtx, p.vty, tostring(moved)))
+        p.tries = p.tries - 1     -- a correction does not use up a look
+        return
+    end
     if p.tries >= CFG.VEHICLE_TRIES or timeout then
-        local back = store().back
-        return finish(p, "Arrived at " .. p.name .. ", but the " .. p.vname
-            .. " did not come along: it should still be parked where you left it"
-            .. (back and (" (" .. math.floor(back.x) .. "," .. math.floor(back.y) .. ")") or "") .. ".", "bad")
+        local msg
+        if v and d then
+            msg = string.format("Arrived at %s, but the %s ended up %d tiles away (%d,%d). Walk over to it, or try the trip again.",
+                p.name, p.vname, math.floor(d + 0.5), math.floor(vx), math.floor(vy))
+        else
+            local back = store().back
+            msg = "Arrived at " .. p.name .. ", but the " .. p.vname .. " has not shown up here"
+                .. (back and (" (it may still be at " .. math.floor(back.vx or back.x) .. "," .. math.floor(back.vy or back.y) .. ")") or "") .. "."
+        end
+        return finish(p, msg, "bad")
     end
 end
 
@@ -331,7 +358,7 @@ function W.travel(player, wp, withVeh)
 
     pcall(function() ISTimedActionQueue.clear(player) end)
     local moved = nil
-    if veh then moved = moveVehicle(veh, vtx, vty, vtz) end
+    if veh then moved = moveVehicle(veh, vtx, vty, vtz, "first") end
     local okTp = pcall(function() player:teleportTo(ptx, pty, ptz) end)
     if not okTp then
         say(player, "The teleport call failed (see console)", "bad")
@@ -344,7 +371,7 @@ function W.travel(player, wp, withVeh)
     pending = {
         name = tostring(wp.name), ptx = ptx, pty = pty, ptz = ptz, seated = seated and veh ~= nil,
         vid = veh and vehId(veh) or nil, vname = veh and vehName(veh) or nil,
-        vtx = vtx, vty = vty, vtz = vtz, ticks = 0, tries = 0, landed = false,
+        vtx = vtx, vty = vty, vtz = vtz, ticks = 0, tries = 0, fixes = 0, landed = false,
     }
     Events.OnTick.Add(onTick)
     return true
@@ -376,7 +403,7 @@ local function putWaypoint(player, name, wp, veh)
     if i then d.list[i] = wp else d.list[#d.list + 1] = wp end
     say(player, (i and "Updated" or "Saved") .. " waypoint " .. name
         .. (wp.hasV and (" (truck spot saved: " .. vehName(veh) .. ")")
-            or (wp.fromMap and " (from the map)" or " (on foot: stand next to your truck to save a truck spot)")), "ok")
+            or ((wp.fromMap or wp.typed) and " (coordinates only)" or " (on foot: stand next to your truck to save a truck spot)")), "ok")
     return true
 end
 
@@ -401,6 +428,14 @@ function W.saveAt(player, name, x, y)
     name = cleanName(name)
     if name == "" then say(player, "A waypoint needs a name", "bad"); return false end
     return putWaypoint(player, name, { x = x, y = y, z = 0, hasV = false, fromMap = true }, nil)
+end
+
+-- typed coordinates (the Travel window's form): same as a map point, with a height
+function W.saveXYZ(player, name, x, y, z)
+    name = cleanName(name)
+    if name == "" then say(player, "A waypoint needs a name", "bad"); return false end
+    if not (tonumber(x) and tonumber(y)) then say(player, "A waypoint needs X and Y", "bad"); return false end
+    return putWaypoint(player, name, { x = tonumber(x), y = tonumber(y), z = tonumber(z) or 0, hasV = false, typed = true }, nil)
 end
 
 function W.travelXY(player, x, y, withVeh)
@@ -463,6 +498,7 @@ local function onFill(playerNum, context, worldobjects, test)
     local opt = context:addOption("Empire: Travel")
     local sub = ISContextMenu:getNew(context)
     context:addSubMenu(opt, sub)
+    if W.openUI then sub:addOption("Open the Travel window (Numpad 1)", player, W.openUI) end
     for _, wp in ipairs(d.list) do
         if veh then
             sub:addOption("Go to " .. wp.name .. " with the " .. vehName(veh), player, W.travel, wp, true)
@@ -525,12 +561,31 @@ pcall(wrapWorldMap)
 
 -- ---------- keys, vehicle memory, first-run seed ----------
 
+-- Numpad 1 opens the Travel window (20_TravelMenu.lua); Shift+Numpad 1 is the old one-press home / back.
+-- A text box with focus in that window keeps its own keys.
 Events.OnKeyPressed.Add(function(key)
     local k1 = 79   -- lwjgl KEY_NUMPAD1
     pcall(function() if Keyboard and Keyboard.KEY_NUMPAD1 then k1 = Keyboard.KEY_NUMPAD1 end end)
     if key ~= k1 then return end
     local p = getSpecificPlayer(0)
-    if p and not p:isDead() then pcall(W.homeOrBack, p) end
+    if not p or p:isDead() then return end
+    local typing = false
+    pcall(function()
+        local ui = EmpireTravelUI and EmpireTravelUI.instance
+        if ui and ui:isVisible() then
+            for _, e in ipairs({ ui.xEntry, ui.yEntry, ui.zEntry, ui.nameEntry }) do
+                if e and e:isFocused() then typing = true end
+            end
+        end
+    end)
+    if typing then return end
+    local shift = false
+    pcall(function() shift = isShiftKeyDown() end)
+    if shift or not W.toggleUI then
+        pcall(W.homeOrBack, p)
+    else
+        W.toggleUI(p)
+    end
 end)
 
 -- YOUR vehicle = the last one you got into. Numpad 1 only ever takes that one, never a random wreck.
@@ -556,5 +611,5 @@ Events.OnGameStart.Add(function()
     local names = {}
     for _, w in ipairs(d.list) do names[#names + 1] = w.name end
     print(TAG .. "loaded: " .. #d.list .. " waypoints (" .. table.concat(names, ", ")
-        .. "); Numpad 1 = home/back, right-click > Empire: Travel")
+        .. "); Numpad 1 = Travel window, Shift+Numpad 1 = home/back, right-click > Empire: Travel")
 end)

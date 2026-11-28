@@ -63,10 +63,15 @@ local function newVehicle(id, name, x, y)
   local v = {id = id, name = name, x = x, y = y, z = 0, moves = {}, entered = nil, towing = false}
   function v:getId() return self.id end
   function v:getScriptName() return "Base." .. self.name end
-  function v:getX() return self.x end function v:getY() return self.y end function v:getZ() return self.z end
+  -- once the physics body has been written (setWorldTransform) the engine owns the position: world = origin + the
+  -- CURRENT physics offset, and plain setX/setY writes no longer matter (as in the real game)
+  function v:getX() if self.phys then return self.phys.x + OFFX end return self.x end
+  function v:getY() if self.phys then return self.phys.y + OFFY end return self.y end
+  function v:getZ() return self.z end
   function v:setX(a) self.x = a end function v:setY(a) self.y = a end function v:setZ(a) self.z = a end
-  function v:getWorldTransform(t) t.origin:set(self.x - OFFX, self.z, self.y - OFFY); return t end
+  function v:getWorldTransform(t) t.origin:set(self:getX() - OFFX, self.z, self:getY() - OFFY); return t end
   function v:setWorldTransform(t) local o = t.origin
+    if not (world.stubborn and #self.moves >= 1) then self.phys = {x = o:x(), y = o:z()}; self.z = o:y() end
     self.moves[#self.moves + 1] = {x = o:x() + OFFX, y = o:z() + OFFY, z = o:y()} end
   function v:setPhysicsActive() end
   function v:getVehicleTowing() return self.towing and {} or nil end
@@ -82,7 +87,9 @@ function P:getX() return self.x end function P:getY() return self.y end function
 function P:getVehicle() return self.vehicle end
 function P:getPlayerNum() return 0 end
 function P:getStats() local s = self; return {getNumChasingZombies = function() return s.chased end, getNumVeryCloseZombies = function() return 0 end} end
-function P:teleportTo(x, y, z) self.tp[#self.tp + 1] = {x = x, y = y, z = z}; self.x, self.y, self.z = x, y, z; self.vehicle = nil end
+function P:teleportTo(x, y, z) self.tp[#self.tp + 1] = {x = x, y = y, z = z}; self.x, self.y, self.z = x, y, z; self.vehicle = nil
+  -- the real engine re-centres its physics frame when the player jumps: every physics body then reads shifted
+  if world.recenter and #self.tp == 1 then OFFX = OFFX + world.recenter[1]; OFFY = OFFY + world.recenter[2] end end
 function getSpecificPlayer() return P end
 
 local armed = {}
@@ -96,6 +103,7 @@ local function near(a, b) return math.abs(a - b) < 1e-6 end
 local function ticks(k) for _ = 1, k do fire("OnTick") end end
 local function reset()
   world.vehicles = {}; world.loaded = true; world.blocked = {}; P.tp = {}; P.vehicle = nil; P.chased = 0
+  world.recenter = nil; world.stubborn = nil; OFFX, OFFY = 1000, 2000
   P.x, P.y, P.z = 100, 100, 0; armed = {}; halos = {}
   mdStore.EmpireWaypoints = nil; handlers.OnTick = {}
 end
@@ -167,7 +175,30 @@ truck = newVehicle(11, "Tatra815", 100, 100); P.vehicle = truck
 W.travelTo(P, "Base", true)
 for i = #world.vehicles, 1, -1 do table.remove(world.vehicles, i) end   -- the engine dropped it
 ticks(20 * 4)
-expect("missing truck is reported, trip ends", lastHalo():find("did not come along") and count("OnTick") == 0)
+expect("missing truck is reported, trip ends", lastHalo():find("has not shown up") and count("OnTick") == 0)
+
+-- 7b. the real engine re-centres its physics frame on the player's jump: the truck lands ~69 tiles off
+--     (28 Nov 2026 first trip). The arrival check measures the error and shifts it onto the target.
+reset(); fire("OnGameStart")
+truck = newVehicle(40, "Tatra815", 100, 100); P.vehicle = truck
+world.recenter = {49, 49}
+W.travelTo(P, "Base", true)
+expect("first move lands off target after the re-centre", math.abs(truck:getX() - 6032) > 40 and math.abs(truck:getY() - 5238) > 40)
+ticks(20)
+expect("first look finds it off and shifts it again", #truck.moves == 2 and count("OnTick") == 1 and truck.entered == nil)
+ticks(20)
+expect("second look: truck on target, driver seated, trip done",
+  near(truck:getX(), 6032) and near(truck:getY(), 5238) and truck.entered and truck.entered.seat == 0
+  and lastHalo():find("with the Tatra815") and count("OnTick") == 0)
+
+-- 7c. a truck that will not move: after VEHICLE_FIXES corrections it is reported with where it is, not "left behind"
+reset(); fire("OnGameStart")
+truck = newVehicle(41, "Tatra815", 100, 100); P.vehicle = truck
+world.recenter = {49, 49}; world.stubborn = true
+W.travelTo(P, "Base", true)
+ticks(20 * 12)
+expect("stubborn truck: exactly VEHICLE_FIXES corrections tried", #truck.moves == 1 + W.CFG.VEHICLE_FIXES)
+expect("stubborn truck: message says how far it is", lastHalo():find("ended up %d+ tiles away") and count("OnTick") == 0 and truck.entered == nil)
 
 -- 8. trailer refuses
 reset(); fire("OnGameStart")

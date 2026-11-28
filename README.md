@@ -74,7 +74,8 @@ Supporting changes: `EmpireZones.version` plus a cache in `EmpireBases.getEmpire
 
 | Key | Mod | Action |
 |---|---|---|
-| Numpad 1 | EmpireQoL | Waypoints: home / back (takes your truck along) |
+| Numpad 0 | EmpireQoL | Empire menu: every feature as a button (travel, sort, find, loot, mags, chores, base zone, cheats) |
+| Numpad 1 | EmpireQoL | Travel window: saved places, typed coordinates, Home / Back, truck comes along (Shift+Numpad 1 = one-press home / back) |
 | Numpad 2 | EmpireQoL | Find item in base |
 | Numpad 3 | EmpireSortAll | Smart sort |
 | Numpad 4 | EmpireQoL | Cheat item list (vanilla window, no debug needed) |

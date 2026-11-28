@@ -393,6 +393,8 @@ local function openPrompt()
     pcall(function() modal:setAlwaysOnTop(true) end)
 end
 
+EmpireQoL_FindPrompt = openPrompt   -- the Empire menu (21_EmpireMenu.lua) opens the same prompt as Numpad 2
+
 -- ---- triggers ----
 local function onKeyPressed(key)
     if key == FIND_KEY then pcall(openPrompt) end
