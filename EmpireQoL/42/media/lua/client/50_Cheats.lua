@@ -9,7 +9,10 @@
 --             builds the list of all items, so allow a second.
 --   Numpad 6  Spawn vehicle window: pick a vehicle (Tatra815 and the rest), Spawn puts it next to you;
 --             Get Key gives the key of the vehicle beside you, Repair fixes it.
---   Right-click > Empire: Cheats > the same two.
+--   Right-click > Empire: Cheats > the same two, plus a switch for "zombies attack my walls" (below).
+--   Walls switch: ZombieLore.ThumpOnConstruction. OFF = zombies leave player-built walls, fences and doors alone
+--   (the base stays up while you are away; zombies only chase you). Same call the game's own sandbox panel uses
+--   (getSandboxOptions():set + toLua), so it persists in the save like the debug Sandbox panel would.
 
 EmpireCheats = EmpireCheats or {}
 local C = EmpireCheats
@@ -38,6 +41,49 @@ function C.openVehicles()
     return true
 end
 
+local THUMP = "ZombieLore.ThumpOnConstruction"
+
+local function say(player, msg, kind)
+    if player then
+        pcall(function()
+            local c = HaloTextHelper.getColorWhite()
+            if kind == "ok" then c = HaloTextHelper.getColorGreen()
+            elseif kind == "bad" then c = HaloTextHelper.getColorRed() end
+            HaloTextHelper.addTextWithArrow(player, msg, "[br/]", false, c)
+        end)
+    end
+    print("[EmpireCheats] " .. msg)
+end
+
+-- true = zombies can destroy player builds, false = they leave them alone, nil = unknown
+function C.thumpOn()
+    local v
+    pcall(function() v = getSandboxOptions():getOptionByName(THUMP):getValue() end)
+    return v
+end
+
+function C.setThump(player, on)
+    local ok = pcall(function()
+        local so = getSandboxOptions()
+        so:getOptionByName(THUMP):setValue(on)
+        so:set(THUMP, on)
+        so:toLua()
+    end)
+    local now = C.thumpOn()
+    if ok and now == on then
+        say(player, on and "Zombies attack your walls again" or "Zombies now leave your walls alone", "ok")
+    else
+        say(player, "Could not change the walls setting (see console)", "bad")
+    end
+    return ok and now == on
+end
+
+function C.toggleThump(player)
+    local cur = C.thumpOn()
+    if cur == nil then say(player, "Walls setting not found in this build", "bad"); return false end
+    return C.setThump(player, not cur)
+end
+
 Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
     if test then return end
     local p = getSpecificPlayer(playerNum)
@@ -47,6 +93,11 @@ Events.OnFillWorldObjectContextMenu.Add(function(playerNum, context, worldobject
     context:addSubMenu(opt, sub)
     sub:addOption("Item list (search, double-click adds)", p, C.openItems)
     sub:addOption("Spawn a vehicle (key + repair buttons)", p, C.openVehicles)
+    local cur = C.thumpOn()
+    if cur ~= nil then
+        sub:addOption(cur and "Zombies attack my walls: ON (click: leave them alone)"
+                          or "Zombies leave my walls alone: ON (click: attack again)", p, C.toggleThump)
+    end
 end)
 
 Events.OnKeyPressed.Add(function(key)

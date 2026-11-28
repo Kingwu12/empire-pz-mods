@@ -50,8 +50,8 @@ left it: nothing is deleted. If it does, send the console lines and the transfor
 1. Paint the **base zone** over the compound with EmpireZones (right-click > zone tools): the fenced area, plus
    the dock where the truck parks. Base storage, sort, auto-unload and the crew all key off this zone.
 2. **Player builds**: `ZombieLore.ThumpOnConstruction` is `true` in the EmpirePlay preset, so zombies can break
-   what you build. Debug mode (`Project Zomboid DEBUG` shortcut) > right-click > Debug > Main > Sandbox settings
-   lets you flip it to `false` in the live world. Map fences are not documented as indestructible: close the
+   what you build. Right-click the ground > **Empire: Cheats > Zombies attack my walls** flips it to `false` in the
+   live world (no debug mode needed; it is the same call the game's own sandbox panel makes). Map fences are not documented as indestructible: close the
    gate gaps with player builds and re-check the fence after the first night.
 3. Storage: welding crates (level 2 = 80 capacity) along a wall for ammo (about 28 Marz 7.62 cartons each),
    metal shelves for the rest. The truck beds (Tatra 815 bed 850) are the transport, not the storage.

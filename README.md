@@ -80,6 +80,7 @@ Supporting changes: `EmpireZones.version` plus a cache in `EmpireBases.getEmpire
 | Numpad 4 | EmpireQoL | Cheat item list (vanilla window, no debug needed) |
 | Numpad 5 | EmpireQoL | Auto-chores on/off |
 | Numpad 6 | EmpireQoL | Cheat spawn-vehicle window |
+<!-- right-click > Empire: Cheats also has the item list, the vehicle window and a switch for zombies attacking player-built walls -->
 | Numpad 7 | EmpireQoL | Corpse vacuum |
 | Numpad 8 | EmpireQoL | Top off magazines |
 | Numpad 9 | EmpireQoL | Run self-test |
